@@ -2,7 +2,9 @@
 
 ## Decision
 
-Tauri 2 is a suitable choice for a voice-to-text memo application that targets iOS, Android, and desktop platforms.
+Tauri 2 is a suitable choice for a mobile-first voice-to-text memo application
+that targets iOS and Android first and expands to desktop after the mobile core
+experience is validated.
 
 The application should share its UI, memo domain logic, storage model, and synchronization flow across platforms. Audio capture and background recording, however, must be treated as platform integrations: implement them through native Tauri mobile plugins (Swift on iOS and Kotlin on Android) behind a common recorder interface.
 
@@ -80,12 +82,14 @@ Treat mobile recorder support as a first-class plugin boundary from the start. T
 
 ## Delivery Plan
 
-1. Build the cross-platform memo UI and local transcript storage.
-2. Implement foreground recording for desktop, iOS, and Android through the common recorder interface.
-3. Add the backend transcription proxy and retry-safe upload queue.
-4. Test permission denial, phone calls, audio interruptions, app termination, offline uploads, and low-connectivity behavior on physical devices.
-5. Add background recording only if the product requires recording with the screen locked or while the app is not visible.
-6. Add live transcription only after the post-recording experience is validated.
+1. Build the touch-first memo UI and local transcript storage for iOS and Android.
+2. Implement native iOS and Android foreground recording through the common recorder interface.
+3. Test permission denial, phone calls, audio interruptions, app termination, and route changes on physical iOS and Android devices.
+4. Add the backend transcription proxy and retry-safe, idempotent upload queue.
+5. Validate offline uploads and low-connectivity recovery on physical devices.
+6. Add desktop recording only after the mobile core experience is stable.
+7. Add background recording only if the product requires recording with the screen locked or while the app is not visible.
+8. Add live transcription only after the post-recording experience is validated.
 
 ## Sources
 
