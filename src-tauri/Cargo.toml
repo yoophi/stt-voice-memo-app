@@ -1,0 +1,28 @@
+[package]
+name = "stt-voice-memo-app"
+version = "0.1.0"
+description = "Mobile-first voice memo application foundation"
+authors = ["yoophi"]
+license = ""
+repository = ""
+edition = "2024"
+rust-version = "1.85"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "stt_voice_memo_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.3", features = [] }
+
+[dependencies]
+tauri = { version = "2.11.3", features = [] }
+
+# swift-rs 1.0.7 passes only `--arch` to SwiftPM. Xcode 27 then selects the
+# macOS SDK before the compiler-level iOS overrides, producing conflicting
+# SDK and target arguments. Keep this patch local until upstream supports
+# SwiftPM's target-level `--triple` option.
+[patch.crates-io]
+swift-rs = { path = "vendor/swift-rs" }
