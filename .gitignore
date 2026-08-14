@@ -1,0 +1,41 @@
+# Node and frontend outputs
+node_modules/
+dist/
+build/
+coverage/
+*.log
+
+# Environment and local secrets
+.env*
+
+# Rust outputs
+target/
+src-tauri/target/
+debug/
+release/
+*.rs.bk
+*.rlib
+*.prof*
+
+# Android build and local signing state
+src-tauri/gen/android/.gradle/
+src-tauri/gen/android/**/build/
+src-tauri/gen/android/local.properties
+*.jks
+*.keystore
+
+# Apple build and local signing state
+src-tauri/gen/apple/.build/
+src-tauri/gen/apple/DerivedData/
+src-tauri/gen/apple/*.xcworkspace/xcuserdata/
+src-tauri/gen/apple/*.xcodeproj/xcuserdata/
+*.mobileprovision
+
+# IDE and operating system
+.DS_Store
+Thumbs.db
+*.tmp
+*.swp
+.vscode/
+.idea/
+*.iml

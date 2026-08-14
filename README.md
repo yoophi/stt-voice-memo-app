@@ -146,6 +146,7 @@ Handy는 로컬 음성 인식 중심의 데스크톱 애플리케이션인 반�
 - [`.specify/memory/constitution.md`](.specify/memory/constitution.md): 프로젝트의 필수 개발 원칙과 품질 기준
 - [`docs/tauri-mobile-voice-memo.md`](docs/tauri-mobile-voice-memo.md): Tauri 모바일 녹음과 GPT Transcribe 연동 검토
 - [`docs/handy-mobile-code-reuse.md`](docs/handy-mobile-code-reuse.md): Handy 오디오 처리 코드의 모바일 재사용 가능성 분석
+- [`docs/ios-simulator-xcode-27-troubleshooting.md`](docs/ios-simulator-xcode-27-troubleshooting.md): Xcode 27에서 Tauri iOS Simulator 빌드·실행 문제와 해결 기록
 
 ## 개발 환경
 
