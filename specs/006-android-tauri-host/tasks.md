@@ -83,7 +83,7 @@ tests are written before implementation; physical-device execution remains Issue
 - [x] T027 [US3] Build the ARM64 debug APK with `pnpm build:android` and validate it with `scripts/workspace/check-android-apk.mjs`
 - [x] T028 [US3] Document tracking, regeneration, preflight, build, and artifact inspection in `docs/android-tauri-host.md` and `README.md`
 - [x] T029 [US3] Create content-safe automated/physical evidence rows in `tests/device/android-tauri-host.md`, recording automated results only
-- [x] T030 [US3] Verify Issue #23 can start from the merged revision without native generation or source edits and link the handoff in `tests/device/android-tauri-host.md`
+- [ ] T030 [US3] Verify Issue #23 can start from the merged revision without native generation or source edits and link the exact revision and APK hash in `tests/device/android-tauri-host.md`
 
 **Checkpoint**: Automated evidence is complete; physical acceptance is visibly owned by Issue #23.
 

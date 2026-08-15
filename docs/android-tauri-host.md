@@ -37,7 +37,8 @@ The build runner selects the installed Java 17 on macOS and maps the existing
 pnpm build:android
 node scripts/workspace/check-android-apk.mjs \
   --apk src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk \
-  --variant debug
+  --variant debug \
+  --canary stt-apk-payload-canary-never-secret
 ```
 
 The source host has no permission, one required touchscreen feature, and one
@@ -46,6 +47,9 @@ because AndroidX manifest merging adds one application-scoped signature
 permission, a non-exported startup provider, and a signature-guarded profile
 receiver. Every merged member is exact-allowlisted; Android system permissions,
 Leanback, FileProvider, services, and sensitive capabilities remain forbidden.
+The validator also extracts the complete APK and scans assets, resources, native
+libraries, and metadata for backend-only configuration names plus synthetic
+canary representations. Findings are reported by category without echoing values.
 
 `pnpm tauri android dev` is not an acceptance command in this feature. It may
 need development-server network access, while the reviewed bundled APK owns no

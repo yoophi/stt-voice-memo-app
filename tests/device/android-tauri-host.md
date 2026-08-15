@@ -9,7 +9,9 @@ pass, and emulator/build evidence must never replace a physical row.
 
 ## Automated evidence
 
-**Revision**: working tree based on `801639e` (record final commit in PR/Issue #23)
+**Revision**: pre-review working tree based on `801639e`; this is diagnostic
+evidence only, not exact-revision acceptance evidence. T030 remains open until a
+post-review commit is built and recorded with its APK hash.
 **Date**: 2026-08-16
 **Environment**: macOS, Java 17, Android SDK 36, Build Tools 35.0.0, NDK 28.2.13676358
 
@@ -18,9 +20,9 @@ pass, and emulator/build evidence must never replace a physical row.
 | `pnpm validate:android-host`            | Passed | source host and toolchain verified                                 |
 | `pnpm test:workspace`                   | Passed | 34 workspace/path/capability tests                                 |
 | `pnpm build:android`                    | Passed | ARM64 bundled debug APK, 169864126 bytes                           |
-| `check-android-apk.mjs --variant debug` | Passed | app ID/API 24, zero sensitive permissions, launcher verified       |
+| `check-android-apk.mjs --variant debug` | Passed | exact merged allowlist and complete APK payload scan verified      |
 | Three isolated tracked-snapshot builds  | Passed | independent source/output dirs; post-build Git diff stayed empty   |
-| APK SHA-256                             | Passed | `b825f06a51aa02c1d408a21e37cf6265a96e9c0bce31e0f7bb70b9d36a114a9f` |
+| Candidate APK SHA-256                   | Passed | `b825f06a51aa02c1d408a21e37cf6265a96e9c0bce31e0f7bb70b9d36a114a9f` |
 
 The initial APK attempt failed before Gradle project configuration because Tauri
 selected Android Studio JBR 25.0.2. The root runner now selects Java 17 and the

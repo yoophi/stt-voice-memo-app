@@ -181,47 +181,134 @@ describe("workspace foundation", () => {
   test("accepts only the reviewed merged Android runtime manifest", async () => {
     await withTemporaryDirectory("stt-merged-manifest-", async (directory) => {
       const manifestPath = resolve(directory, "AndroidManifest.xml");
+      const payloadDirectory = resolve(directory, "payload");
+      await mkdir(payloadDirectory);
       const dynamicPermission =
         "com.yoophi.sttvoicememo.debug.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION";
-      await writeFile(
-        manifestPath,
-        `<?xml version="1.0" encoding="utf-8"?>
+      const manifest = `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <uses-feature android:name="android.hardware.touchscreen" android:required="true" />
   <permission android:name="${dynamicPermission}" android:protectionLevel="0x2" />
   <uses-permission android:name="${dynamicPermission}" />
-  <application>
-    <activity android:name="com.yoophi.sttvoicememo.MainActivity" android:exported="true" />
-    <provider android:name="androidx.startup.InitializationProvider" android:exported="false" />
-    <receiver android:name="androidx.profileinstaller.ProfileInstallReceiver" android:permission="android.permission.DUMP" android:exported="true" />
+  <application android:usesCleartextTraffic="false">
+    <activity android:name="com.yoophi.sttvoicememo.MainActivity" android:exported="true" android:launchMode="2" android:configChanges="0xfb4">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN" />
+        <category android:name="android.intent.category.LAUNCHER" />
+      </intent-filter>
+    </activity>
+    <provider android:name="androidx.startup.InitializationProvider" android:exported="false" android:authorities="com.yoophi.sttvoicememo.debug.androidx-startup">
+      <meta-data android:name="androidx.emoji2.text.EmojiCompatInitializer" android:value="androidx.startup" />
+      <meta-data android:name="androidx.lifecycle.ProcessLifecycleInitializer" android:value="androidx.startup" />
+      <meta-data android:name="androidx.profileinstaller.ProfileInstallerInitializer" android:value="androidx.startup" />
+    </provider>
+    <receiver android:name="androidx.profileinstaller.ProfileInstallReceiver" android:permission="android.permission.DUMP" android:enabled="true" android:exported="true" android:directBootAware="false">
+      <intent-filter><action android:name="androidx.profileinstaller.action.INSTALL_PROFILE" /></intent-filter>
+      <intent-filter><action android:name="androidx.profileinstaller.action.SKIP_FILE" /></intent-filter>
+      <intent-filter><action android:name="androidx.profileinstaller.action.SAVE_PROFILE" /></intent-filter>
+      <intent-filter><action android:name="androidx.profileinstaller.action.BENCHMARK_OPERATION" /></intent-filter>
+    </receiver>
   </application>
 </manifest>
-`,
-        "utf8",
-      );
+`;
+      await writeFile(manifestPath, manifest, "utf8");
+      await writeFile(resolve(payloadDirectory, "safe.bin"), "foundation-shell", "utf8");
 
       const accepted = await runNode("scripts/workspace/check-android-apk.mjs", [
         "--manifest",
         manifestPath,
+        "--payloadDir",
+        payloadDirectory,
         "--variant",
         "debug",
       ]);
       expect(accepted).toMatchObject({ exitCode: 0 });
       expect(accepted.stdout).toContain("sensitivePermissions=0");
+      expect(accepted.stdout).toContain("payload=verified");
 
-      const mutated = (await readFile(manifestPath, "utf8")).replace(
-        "<application>",
-        '<uses-permission android:name="android.permission.RECORD_AUDIO" />\n  <application>',
-      );
-      await writeFile(manifestPath, mutated, "utf8");
-      const rejected = await runNode("scripts/workspace/check-android-apk.mjs", [
+      const mutations = [
+        [
+          "permission",
+          (value) =>
+            value.replace(
+              "<application",
+              '<uses-permission android:name="android.permission.RECORD_AUDIO" />\n  <application',
+            ),
+          "ANDROID_APK_PERMISSION_INVALID",
+        ],
+        [
+          "feature",
+          (value) =>
+            value.replace(
+              "<application",
+              '<uses-feature android:name="android.software.leanback" android:required="false" />\n  <application',
+            ),
+          "ANDROID_APK_FEATURE_INVALID",
+        ],
+        [
+          "activity alias",
+          (value) =>
+            value.replace(
+              "</application>",
+              '<activity-alias android:name=".Alias" />\n  </application>',
+            ),
+          "ANDROID_APK_ACTIVITY_INVALID",
+        ],
+        [
+          "launcher category",
+          (value) =>
+            value.replace(
+              "android.intent.category.LAUNCHER",
+              "android.intent.category.LEANBACK_LAUNCHER",
+            ),
+          "ANDROID_APK_LAUNCHER_INVALID",
+        ],
+        [
+          "provider export",
+          (value) =>
+            value.replace(
+              'android:name="androidx.startup.InitializationProvider" android:exported="false"',
+              'android:name="androidx.startup.InitializationProvider" android:exported="true"',
+            ),
+          "ANDROID_APK_PROVIDER_INVALID",
+        ],
+        [
+          "receiver permission",
+          (value) => value.replace("android.permission.DUMP", "android.permission.RECORD_AUDIO"),
+          "ANDROID_APK_RECEIVER_INVALID",
+        ],
+      ];
+      for (const [, mutate, expectedCode] of mutations) {
+        await writeFile(manifestPath, mutate(manifest), "utf8");
+        const rejected = await runNode("scripts/workspace/check-android-apk.mjs", [
+          "--manifest",
+          manifestPath,
+          "--payloadDir",
+          payloadDirectory,
+          "--variant",
+          "debug",
+        ]);
+        expect(rejected.exitCode).toBe(1);
+        expect(rejected.stderr).toContain(expectedCode);
+        expect(rejected.stderr).not.toContain("RECORD_AUDIO");
+      }
+
+      await writeFile(manifestPath, manifest, "utf8");
+      const canary = "stt-apk-payload-canary-never-secret";
+      await writeFile(resolve(payloadDirectory, "native.so"), canary, "utf8");
+      const leaked = await runNode("scripts/workspace/check-android-apk.mjs", [
         "--manifest",
         manifestPath,
+        "--payloadDir",
+        payloadDirectory,
+        "--canary",
+        canary,
         "--variant",
         "debug",
       ]);
-      expect(rejected.exitCode).toBe(1);
-      expect(rejected.stderr).toContain("ANDROID_APK_PERMISSION_INVALID");
-      expect(rejected.stderr).not.toContain("RECORD_AUDIO");
+      expect(leaked.exitCode).toBe(1);
+      expect(leaked.stderr).toContain("ANDROID_APK_SECRET_BOUNDARY_INVALID");
+      expect(leaked.stderr).not.toContain(canary);
     });
   });
 });
