@@ -125,8 +125,8 @@ project paths remain discoverable.
 - [x] T034 [P] Update `.gitignore`, `.prettierignore`, and `eslint.config.js` for root Cargo output, backend local environments, deterministic fixtures, and generated native output
 - [x] T035 [P] Update root onboarding and scoped/full validation links in `README.md` and current feature context in `AGENTS.md`
 - [x] T036 Run contract, backend, mobile, frontend, Rust, Clippy, Swift, formatting, lint, build, drift, and secret checks from `specs/005-backend-monorepo-workspace/quickstart.md`
-- [x] T037 Transfer the physical iPhone build/install/launch regression and evidence ownership to GitHub Issue #23
-- [x] T038 Transfer the physical Android build/install/launch regression and evidence ownership to GitHub Issue #23
+- [ ] T037 [DEFERRED #23] Record physical iPhone build/install/foreground-launch regression evidence
+- [ ] T038 [BLOCKED #23/#24] Record physical Android build/install/foreground-launch regression evidence after minimal host initialization
 - [x] T039 Review every changed file for real secrets, audio/transcript content, generated drift, and unintended mobile path changes, then record the automated results in `tests/device/backend-monorepo-workspace.md`
 
 ---
@@ -141,9 +141,9 @@ project paths remain discoverable.
 - **US1 (Phase 3)**: Depends on ownership helpers from Phase 2.
 - **US2 (Phase 4)**: Depends on US1 package ownership and command facades.
 - **US3 (Phase 5)**: Depends on US1/US2 command names so CI invokes stable scopes.
-- **Polish (Phase 6)**: Depends on all automated implementation stories. T037 and
-  T038 complete the scope handoff only; Issue #23 requires connected physical
-  devices/signing and cannot be substituted by CI.
+- **Polish (Phase 6)**: Automated work depends on all implementation stories.
+  T037/T038 remain incomplete acceptance gates; Issue #23 requires connected
+  physical devices/signing and its Android half depends on Issue #24.
 
 ### User Story Dependencies
 
@@ -200,5 +200,5 @@ Task T024: Add the names-only backend environment template after US1 creates the
 - Never place a real credential in a fixture, command argument, test log, or evidence file.
 - `dev:backend` intentionally remains unavailable until a later runtime feature.
 - Do not move `src`, `src-tauri`, Apple, or Android generated projects in this issue.
-- T037/T038 indicate that ownership was transferred, not that device trials
-  passed. Only close Issue #23 with actual physical-device evidence.
+- T037/T038 remain unchecked until actual physical-device evidence passes. The
+  separate ownership in Issues #23/#24 does not complete these tasks.

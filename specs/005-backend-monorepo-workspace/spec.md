@@ -193,7 +193,10 @@ project-path checks on iOS and Android targets.
   [#23](https://github.com/yoophi/stt-voice-memo-app/issues/23). That issue MUST
   confirm the merged workspace can locate, build, install, and launch the app
   shell without adding permissions or exposing backend configuration; executing
-  those device trials is outside this implementation PR's scope.
+  those device trials is outside this implementation PR's scope. Feature
+  acceptance remains incomplete until that evidence passes. Android execution
+  additionally depends on minimal host initialization in Issue
+  [#24](https://github.com/yoophi/stt-voice-memo-app/issues/24).
 - **MLR-005**: CI and local checks that do not launch physical devices MUST be
   reported as automated migration evidence, not as substitutes for physical
   mobile acceptance.
@@ -263,7 +266,8 @@ project-path checks on iOS and Android targets.
   [#23](https://github.com/yoophi/stt-voice-memo-app/issues/23) records one
   physical iPhone and one physical Android device build, install, and launch of
   the merged app shell with no newly requested permission and no backend-only
-  configuration. This criterion is not claimed by or included in PR #22.
+  configuration. This criterion is not claimed by or included in PR #22 and is
+  currently unmet; PR #22 must not be described as feature-acceptance complete.
 - **SC-008**: A clean checkout can reproduce every committed derived artifact
   and yields zero uncommitted drift after generation and validation.
 
@@ -282,7 +286,9 @@ project-path checks on iOS and Android targets.
 - Physical-device validation requires locally available signing and connected
   devices. It is excluded from PR #22 and tracked separately by GitHub Issue
   [#23](https://github.com/yoophi/stt-voice-memo-app/issues/23), without treating
-  automated checks as substitute evidence.
+  automated checks as substitute evidence. Issue
+  [#24](https://github.com/yoophi/stt-voice-memo-app/issues/24) must first add the
+  minimal Android host required by the Android half of that gate.
 - Existing recording and transcription behaviors are regression constraints,
   not implementation scope for this feature.
 

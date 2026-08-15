@@ -123,18 +123,20 @@ one scope cannot certify stale output from another.
 
 ## Decision 7: Keep automated and physical mobile evidence separate
 
-**Decision**: Automated validation checks that Tauri configuration, generated
-Apple project, Android location rule, Rust package, and mobile commands remain
-discoverable. Physical build/install/launch execution is excluded from PR #22
-and transferred to GitHub Issue
-[#23](https://github.com/yoophi/stt-voice-memo-app/issues/23), which updates the
-device evidence document with no new permissions or backend configuration
-observed.
+**Decision**: Automated validation checks the Tauri configuration, generated
+Apple project, Rust packages, and mobile command ownership. Because the baseline
+has no Android host, it reports Android as unavailable rather than verified.
+Issue [#24](https://github.com/yoophi/stt-voice-memo-app/issues/24) owns minimal
+Android host initialization. Physical build/install/launch execution is excluded
+from PR #22 and owned by Issue
+[#23](https://github.com/yoophi/stt-voice-memo-app/issues/23), which depends on
+#24 for Android and updates the device evidence document.
 
 **Rationale**: Repository CI generally cannot satisfy signing and device access.
 The constitution requires a real-device verification plan for mobile regression
 and forbids treating simulator or compile-only output as equivalent. A separate
 tracked issue preserves that release gate without claiming it in this workspace
-implementation PR.
+implementation PR. The feature acceptance gate remains incomplete until the
+follow-up evidence passes.
 
 **Source**: [Tauri environment and native project paths](https://v2.tauri.app/reference/environment-variables/)

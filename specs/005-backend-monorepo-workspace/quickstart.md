@@ -97,19 +97,22 @@ the host supports them. Any platform-specific omission is printed separately.
 ```sh
 test -d src-tauri/gen/apple/stt-voice-memo-app.xcodeproj
 pnpm tauri ios build --debug --target aarch64 --no-sign
-test ! -e src-tauri/gen/android/settings.gradle
 node scripts/workspace/check-mobile-paths.mjs
 ```
 
-The Android host remains uninitialized in this feature, matching `origin/main`.
-Initializing it, selecting capabilities, and running the physical Android build
-belongs to a dedicated mobile-host feature. Do not commit locally generated SDK,
-native library, signing, or host files from this workspace migration.
+The checker reports Apple as verified and Android as `unavailable` on the current
+baseline; that is an honest incomplete result, not a passing Android check.
+Issue [#24](https://github.com/yoophi/stt-voice-memo-app/issues/24) owns minimal
+Android host initialization and restoration of the root Android command. Do not
+commit locally generated SDK, native library, or signing files from this
+workspace migration.
 
 ## 8. Follow up physical-device evidence
 
 Physical-device execution is excluded from PR #22 and tracked by GitHub Issue
-[#23](https://github.com/yoophi/stt-voice-memo-app/issues/23). When that issue is
+[#23](https://github.com/yoophi/stt-voice-memo-app/issues/23), which depends on
+[#24](https://github.com/yoophi/stt-voice-memo-app/issues/24) for Android. When
+that issue is
 run, use `tests/device/backend-monorepo-workspace.md` to record, for each platform:
 
 1. exact commit, device model, OS version, and root command;
@@ -118,4 +121,4 @@ run, use `tests/device/backend-monorepo-workspace.md` to record, for each platfo
 4. absence of backend-only configuration in the installed app/build inspection.
 
 Automated, simulator, and unsigned-build results do not complete Issue #23's
-release gate.
+release gate or this feature's acceptance gate.

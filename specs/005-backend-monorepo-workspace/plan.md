@@ -37,13 +37,13 @@ Issue #12 free to implement the first backend application module.
 
 ## Constitution Check
 
-_GATE: Passed before Phase 0 and re-checked after Phase 1._
+_GATE: Implementation checks passed; physical mobile acceptance remains open._
 
-- **Mobile first — PASS**: The mobile source, `src-tauri`, generated Apple/Android
-  paths, platform targets, permissions, and foreground lifecycle behavior remain
-  unchanged. Automated path/build checks are included; physical-device launch
-  evidence is excluded from this implementation PR and owned by follow-up Issue
-  #23. Desktop/background/realtime work is excluded.
+- **Mobile first — EXCEPTION OPEN**: The Apple host remains verifiable, but the
+  repository baseline has no Android host and no physical device was connected.
+  Issue #24 owns minimal Android host initialization and Issue #23 owns physical
+  iPhone/Android execution. This PR is implementation-complete only; it does not
+  satisfy the physical-device acceptance gate.
 - **Hexagonal Rust — PASS**: The root Cargo workspace only changes ownership and
   build orchestration. Existing pure crates stay isolated, and the reserved
   backend map explicitly separates domain/application, ports, inbound, and
@@ -55,17 +55,16 @@ _GATE: Passed before Phase 0 and re-checked after Phase 1._
   credential. Backend-only configuration is separately named, ignored, and
   checked against mobile source/build output with synthetic canaries. This
   feature handles no audio or transcript content.
-- **Resilient voice flow — PASS**: Existing recorder/transcription tests remain
+- **Resilient voice flow — EXCEPTION OPEN**: Existing recorder/transcription tests remain
   in the full validation path. No state transition changes; physical iOS/Android
-  launch regression remains a documented release gate owned by Issue #23 rather
-  than this workspace implementation PR.
+  launch regression remains an unmet release gate owned by Issue #23, with
+  Android execution blocked on Issue #24.
 
 ### Post-Design Re-check
 
-All five gates remain satisfied. The contracts define explicit ownership rather
-than a shared business-logic module, and the physical-device evidence is neither
-conflated with automated CI nor claimed by this PR. Follow-up Issue #23 owns that
-release gate. No constitutional exception is required.
+The architecture, state, and security gates remain satisfied. The physical
+mobile gate is a formal temporary exception recorded below; automated CI is not
+presented as a substitute for it.
 
 ## Project Structure
 
@@ -142,4 +141,6 @@ without copying its OpenAPI source.
 
 ## Complexity Tracking
 
-No constitution violations or additional runtime technologies are introduced.
+| Exception                                                    | Reason                                                                                              | Rejected alternative                                                                                                                                     | Owner                                                                                     | Termination condition                                                                                                                                                  |
+| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Physical iPhone/Android acceptance is not executed in PR #22 | No connected/signable devices were available, and the repository baseline has no Android Tauri host | Committing an auto-generated Android host from this workspace PR was rejected because it introduced unreviewed capabilities and unrelated host ownership | Issue #24 initializes the minimal Android host; Issue #23 then executes both device gates | #24 is merged, #23 records passing build/install/foreground-launch evidence for a physical iPhone and Android device, and T037/T038 plus the evidence file are updated |

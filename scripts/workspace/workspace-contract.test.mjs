@@ -49,21 +49,20 @@ describe("workspace foundation", () => {
     expect(classifyOwnedPath("unexpected/new-root.txt")).toBe("unknown");
   });
 
-  test("keeps the Apple project and uninitialized Android host state at src-tauri", async () => {
+  test("reports the Apple project as verified and the Android host honestly", async () => {
     await expect(
       access(resolve(repositoryRoot, "src-tauri/gen/apple/stt-voice-memo-app.xcodeproj")),
     ).resolves.toBeUndefined();
-    await expect(
-      access(resolve(repositoryRoot, "src-tauri/gen/android/settings.gradle")),
-    ).rejects.toThrow();
-    await expect(
-      access(resolve(repositoryRoot, "src-tauri/gen/android/app/src/main/AndroidManifest.xml")),
-    ).rejects.toThrow();
-
     const tauriConfig = JSON.parse(await readRepositoryFile("src-tauri/tauri.conf.json"));
     expect(tauriConfig.build.frontendDist).toBe("../dist");
     expect(tauriConfig.bundle.iOS.minimumSystemVersion).toBe("15.0");
     expect(tauriConfig.bundle.android.minSdkVersion).toBe(24);
+
+    const result = await runNode("scripts/workspace/check-mobile-paths.mjs");
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("apple=verified");
+    expect(result.stdout).toContain("android=unavailable");
+    expect(result.stdout).toContain("owner=issue-24");
   });
 });
 
@@ -344,9 +343,9 @@ describe("user story 3: affected validation and mobile preservation", () => {
   test("clean-checkout Swift validation generates the ignored Tauri API first", async () => {
     const runner = await readRepositoryFile("scripts/workspace/run-swift-tests.mjs");
 
-    expect(runner).toContain('"tauri-plugin-recorder"');
-    expect(runner).toContain('"aarch64-apple-ios"');
-    expect(runner).toContain('IPHONEOS_DEPLOYMENT_TARGET: "15.0"');
+    expect(runner).toContain('"metadata", "--format-version", "1", "--locked"');
+    expect(runner).toContain('"mobile/ios-api"');
+    expect(runner).not.toContain('"check", "--package", "tauri-plugin-recorder"');
     expect(runner).toContain("prepareTauriApi");
   });
 });

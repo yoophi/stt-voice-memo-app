@@ -1,36 +1,38 @@
 import { execFile, spawn } from "node:child_process";
-import { access } from "node:fs/promises";
-import { resolve } from "node:path";
+import { access, cp, rm } from "node:fs/promises";
+import { dirname, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = resolve(import.meta.dirname, "../..");
 
-async function runInherited(command, arguments_, cwd, environment = process.env) {
-  await new Promise((resolvePromise, reject) => {
-    const child = spawn(command, arguments_, { cwd, env: environment, stdio: "inherit" });
-    child.on("error", reject);
-    child.on("exit", (code) => {
-      if (code === 0) resolvePromise();
-      else reject(new Error(`${command} exited with ${code ?? "unknown"}`));
-    });
-  });
-}
-
 async function prepareTauriApi() {
-  const packageManifest = resolve(
-    repositoryRoot,
-    "src-tauri/plugins/recorder/.tauri/tauri-api/Package.swift",
-  );
+  const pluginTauriDirectory = resolve(repositoryRoot, "src-tauri/plugins/recorder/.tauri");
+  const packageManifest = resolve(pluginTauriDirectory, "tauri-api/Package.swift");
   try {
     await access(packageManifest);
   } catch {
-    await runInherited(
+    const { stdout } = await execFileAsync(
       "cargo",
-      ["check", "--package", "tauri-plugin-recorder", "--target", "aarch64-apple-ios"],
-      repositoryRoot,
-      { ...process.env, IPHONEOS_DEPLOYMENT_TARGET: "15.0" },
+      ["metadata", "--format-version", "1", "--locked"],
+      { cwd: repositoryRoot, maxBuffer: 16 * 1024 * 1024 },
     );
+    const metadata = JSON.parse(stdout);
+    const tauriPackage = metadata.packages.find((package_) => package_.name === "tauri");
+    if (!tauriPackage) throw new Error("tauri package metadata missing");
+
+    const source = resolve(dirname(tauriPackage.manifest_path), "mobile/ios-api");
+    const destination = resolve(pluginTauriDirectory, "tauri-api");
+    const excludedRoots = new Set([".build", "Package.resolved", "Tests"]);
+
+    await rm(destination, { recursive: true, force: true });
+    await cp(source, destination, {
+      recursive: true,
+      filter: (path) => {
+        const firstComponent = relative(source, path).split(sep)[0];
+        return firstComponent === "" || !excludedRoots.has(firstComponent);
+      },
+    });
     await access(packageManifest);
   }
 }

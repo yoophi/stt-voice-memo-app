@@ -109,4 +109,7 @@ Automated builds do not replace physical-device evidence. PR #22 explicitly
 excludes device execution; GitHub Issue
 [#23](https://github.com/yoophi/stt-voice-memo-app/issues/23) owns the physical
 iPhone/Android release gate and updates
-`tests/device/backend-monorepo-workspace.md`.
+`tests/device/backend-monorepo-workspace.md`. Its Android half depends on Issue
+[#24](https://github.com/yoophi/stt-voice-memo-app/issues/24), which owns minimal
+host initialization. Until both physical rows pass, the workspace implementation
+may be code-complete but feature acceptance remains incomplete.

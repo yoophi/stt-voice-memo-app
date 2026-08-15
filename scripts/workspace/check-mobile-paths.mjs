@@ -27,20 +27,26 @@ async function main() {
     throw new Error("MOBILE_BACKEND_CONFIGURATION_EXPOSED");
   }
 
-  const forbiddenAndroidHostPaths = [
+  const androidHostPaths = [
     "src-tauri/gen/android/settings.gradle",
     "src-tauri/gen/android/app/build.gradle.kts",
     "src-tauri/gen/android/app/src/main/AndroidManifest.xml",
   ];
-  for (const path of forbiddenAndroidHostPaths) {
-    const exists = await access(resolve(repositoryRoot, path)).then(
-      () => true,
-      () => false,
-    );
-    if (exists) throw new Error("MOBILE_ANDROID_HOST_SCOPE_EXPANDED");
+  const androidHostState = await Promise.all(
+    androidHostPaths.map((path) =>
+      access(resolve(repositoryRoot, path)).then(
+        () => true,
+        () => false,
+      ),
+    ),
+  );
+
+  if (androidHostState.some(Boolean) && !androidHostState.every(Boolean)) {
+    throw new Error("MOBILE_ANDROID_HOST_INCOMPLETE");
   }
 
-  process.stdout.write("MOBILE_PATHS_OK apple=verified android=unchanged-uninitialized\n");
+  const android = androidHostState.every(Boolean) ? "present-unverified" : "unavailable";
+  process.stdout.write(`MOBILE_PATHS_PARTIAL apple=verified android=${android} owner=issue-24\n`);
 }
 
 await main().catch((error) => {

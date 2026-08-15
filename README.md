@@ -184,5 +184,6 @@ pnpm validate
 ```
 
 `pnpm dev:backend`는 후속 이슈가 백엔드 런타임을 구현하기 전까지 명시적인
-unavailable 결과로 종료됩니다. iOS/Android 명령은 기존처럼 저장소 루트에서
-`pnpm tauri ios ...`, `pnpm tauri android ...` 형태로 실행합니다.
+unavailable 결과로 종료됩니다. iOS 명령은 저장소 루트에서 `pnpm tauri ios
+...` 형태로 실행합니다. Android 호스트와 루트 명령은 Issue #24에서
+초기화하며, 그 전까지 Android 경로 검사는 unavailable로 보고됩니다.
