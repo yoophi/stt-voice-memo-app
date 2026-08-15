@@ -1,0 +1,17 @@
+[package]
+name = "transcription-core"
+version = "0.1.0"
+description = "Pure transcription domain and application use cases"
+edition = "2024"
+rust-version = "1.85"
+
+[dependencies]
+async-trait = "0.1"
+futures = "0.3"
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+thiserror = "2"
+uuid = { version = "1", features = ["serde", "v4"] }
+
+[dev-dependencies]
+futures = "0.3"
