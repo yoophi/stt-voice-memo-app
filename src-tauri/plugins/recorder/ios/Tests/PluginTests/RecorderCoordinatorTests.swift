@@ -65,6 +65,35 @@ final class RecorderCoordinatorTests: XCTestCase {
         XCTAssertEqual(capture.stopCount, 1)
     }
 
+    func testStopRetriesAudioSessionCleanupBeforePublishingFinalized() async throws {
+        let audioSession = FakeAudioSession(permission: .granted, deactivationFailures: 1)
+        let capture = FakeCapture()
+        let files = FakeRecordingFiles()
+        let coordinator = makeCoordinator(
+            capture: capture,
+            files: files,
+            audioSession: audioSession
+        )
+        _ = try await coordinator.start(sessionId: Self.sessionId)
+
+        XCTAssertThrowsError(
+            try coordinator.stop(sessionId: Self.sessionId, reason: .userStop)
+        ) { error in
+            let recorderError = error as? RecorderPluginError
+            XCTAssertEqual(recorderError?.code, .audioSessionFailure)
+            XCTAssertEqual(recorderError?.retryable, true)
+        }
+        XCTAssertEqual(try coordinator.status(sessionId: Self.sessionId).state, .finalizing)
+        XCTAssertEqual(files.finalizeCount, 0)
+
+        let finalized = try coordinator.stop(sessionId: Self.sessionId, reason: .userStop)
+
+        XCTAssertEqual(finalized.sessionId, Self.sessionId)
+        XCTAssertEqual(audioSession.deactivateCount, 2)
+        XCTAssertEqual(capture.stopCount, 1)
+        XCTAssertEqual(files.finalizeCount, 1)
+    }
+
     func testCancelActiveAndPausedSessionsRemovesEachArtifactOnce() async throws {
         for shouldPause in [false, true] {
             let capture = FakeCapture()
@@ -89,6 +118,33 @@ final class RecorderCoordinatorTests: XCTestCase {
             XCTAssertEqual(capture.stopCount, 1)
             XCTAssertEqual(audioSession.deactivateCount, 1)
         }
+    }
+
+    func testCancelRetriesAudioSessionCleanupBeforeRemovingArtifact() async throws {
+        let audioSession = FakeAudioSession(permission: .granted, deactivationFailures: 1)
+        let capture = FakeCapture()
+        let files = FakeRecordingFiles()
+        let coordinator = makeCoordinator(
+            capture: capture,
+            files: files,
+            audioSession: audioSession
+        )
+        _ = try await coordinator.start(sessionId: Self.sessionId)
+
+        XCTAssertThrowsError(try coordinator.cancel(sessionId: Self.sessionId)) { error in
+            let recorderError = error as? RecorderPluginError
+            XCTAssertEqual(recorderError?.code, .audioSessionFailure)
+            XCTAssertEqual(recorderError?.retryable, true)
+        }
+        XCTAssertEqual(try coordinator.status(sessionId: Self.sessionId).state, .finalizing)
+        XCTAssertEqual(files.removeCount, 0)
+
+        let cleanup = try coordinator.cancel(sessionId: Self.sessionId)
+
+        XCTAssertEqual(cleanup, .removed)
+        XCTAssertEqual(audioSession.deactivateCount, 2)
+        XCTAssertEqual(capture.stopCount, 1)
+        XCTAssertEqual(files.removeCount, 1)
     }
 
     func testRepeatedCancelRetriesPendingCleanupUntilRemoval() async throws {
@@ -172,6 +228,29 @@ final class RecorderCoordinatorTests: XCTestCase {
                 XCTAssertEqual(audioSession.deactivateCount, 1)
                 XCTAssertEqual(files.removeCount, 1)
             }
+        }
+    }
+
+    func testStartFailureReportsAudioSessionCleanupFailure() async {
+        let audioSession = FakeAudioSession(permission: .granted, deactivationFailures: 1)
+        let files = FakeRecordingFiles()
+        let coordinator = RecorderCoordinator(
+            audioSession: audioSession,
+            recorderFactory: FakeRecorderFactory(capture: FakeCapture(), creationFails: true),
+            files: files,
+            notifications: NotificationCenter()
+        )
+
+        do {
+            _ = try await coordinator.start(sessionId: Self.sessionId)
+            XCTFail("audio session cleanup failure should replace the start failure")
+        } catch let error as RecorderPluginError {
+            XCTAssertEqual(error.code, .audioSessionFailure)
+            XCTAssertTrue(error.retryable)
+            XCTAssertEqual(audioSession.deactivateCount, 1)
+            XCTAssertEqual(files.removeCount, 1)
+        } catch {
+            XCTFail("unexpected error type")
         }
     }
 
@@ -361,10 +440,16 @@ private final class FakeAudioSession: AudioSessionControlling {
     let activationFails: Bool
     var activateCount = 0
     var deactivateCount = 0
+    var deactivationFailures: Int
 
-    init(permission: RecorderPermissionState, activationFails: Bool = false) {
+    init(
+        permission: RecorderPermissionState,
+        activationFails: Bool = false,
+        deactivationFailures: Int = 0
+    ) {
         self.permission = permission
         self.activationFails = activationFails
+        self.deactivationFailures = deactivationFailures
     }
 
     func permissionStatus() -> RecorderPermissionState { permission }
@@ -375,7 +460,13 @@ private final class FakeAudioSession: AudioSessionControlling {
             throw RecorderPluginError(code: .audioSessionFailure, retryable: true)
         }
     }
-    func deactivate() { deactivateCount += 1 }
+    func deactivate() throws {
+        deactivateCount += 1
+        if deactivationFailures > 0 {
+            deactivationFailures -= 1
+            throw RecorderPluginError(code: .audioSessionFailure, retryable: true)
+        }
+    }
 }
 
 @MainActor
@@ -434,6 +525,7 @@ private final class FakeRecordingFiles: RecordingFileManaging {
     var cleanupResults: [CleanupOutcome]
     let finalizationError: RecorderPluginError?
     var removeCount = 0
+    var finalizeCount = 0
 
     init(
         cleanup: CleanupOutcome = .removed,
@@ -451,6 +543,7 @@ private final class FakeRecordingFiles: RecordingFileManaging {
     func finalize(sessionId: String, url: URL, durationMs: UInt64, reason: FinalizationReason) throws
         -> NativeFinalizedRecording
     {
+        finalizeCount += 1
         if let finalizationError { throw finalizationError }
         return NativeFinalizedRecording(
             artifactId: "c56a4180-65aa-42ec-a945-5fd21dec0538",

@@ -8,7 +8,7 @@ protocol AudioSessionControlling: AnyObject {
     func permissionStatus() -> RecorderPermissionState
     func requestPermission() async -> RecorderPermissionState
     func activate() throws
-    func deactivate()
+    func deactivate() throws
 }
 
 @MainActor
@@ -92,19 +92,31 @@ final class SystemAudioSession: AudioSessionControlling {
             try session.setCategory(.record, mode: .default, options: [])
             try session.setActive(true)
         } catch {
-            restoreConfiguration()
+            try? restoreConfiguration()
             throw RecorderPluginError(code: .audioSessionFailure, retryable: true)
         }
     }
 
-    func deactivate() {
-        try? session.setActive(false, options: .notifyOthersOnDeactivation)
-        restoreConfiguration()
+    func deactivate() throws {
+        var cleanupFailed = false
+        do {
+            try session.setActive(false, options: .notifyOthersOnDeactivation)
+        } catch {
+            cleanupFailed = true
+        }
+        do {
+            try restoreConfiguration()
+        } catch {
+            cleanupFailed = true
+        }
+        if cleanupFailed {
+            throw RecorderPluginError(code: .audioSessionFailure, retryable: true)
+        }
     }
 
-    private func restoreConfiguration() {
+    private func restoreConfiguration() throws {
         guard let previousConfiguration else { return }
-        try? session.setCategory(
+        try session.setCategory(
             previousConfiguration.category,
             mode: previousConfiguration.mode,
             options: previousConfiguration.options
@@ -343,20 +355,35 @@ final class RecorderCoordinator {
             emit(sessionId: sessionId, state: .recording)
             return result
         } catch let error as RecorderPluginError {
-            audioSession.deactivate()
-            throw startFailure(
+            throw startFailureAfterDeactivation(
                 error,
                 sessionId: sessionId,
                 afterRemoving: destination
             )
         } catch {
-            audioSession.deactivate()
-            throw startFailure(
+            throw startFailureAfterDeactivation(
                 RecorderPluginError(code: .recorderFailure, retryable: true),
                 sessionId: sessionId,
                 afterRemoving: destination
             )
         }
+    }
+
+    private func startFailureAfterDeactivation(
+        _ error: RecorderPluginError,
+        sessionId: String,
+        afterRemoving destination: URL
+    ) -> RecorderPluginError {
+        let reportedError: RecorderPluginError
+        do {
+            try audioSession.deactivate()
+            reportedError = error
+        } catch let cleanupError as RecorderPluginError {
+            reportedError = cleanupError
+        } catch {
+            reportedError = RecorderPluginError(code: .audioSessionFailure, retryable: true)
+        }
+        return startFailure(reportedError, sessionId: sessionId, afterRemoving: destination)
     }
 
     private func startFailure(
@@ -411,14 +438,19 @@ final class RecorderCoordinator {
             }
         }
         var recording = try requireActive(sessionId: sessionId)
-        guard recording.state == .recording || recording.state == .paused else {
+        guard recording.state == .recording
+            || recording.state == .paused
+            || recording.state == .finalizing
+        else {
             throw RecorderPluginError(code: .invalidTransition)
         }
-        recording.state = .finalizing
-        active = recording
         let durationMs = UInt64(max(0, recording.capture.currentTime) * 1_000)
-        recording.capture.stop()
-        audioSession.deactivate()
+        if recording.state != .finalizing {
+            recording.state = .finalizing
+            active = recording
+            recording.capture.stop()
+        }
+        try deactivateAudioSession()
         do {
             let finalized = try files.finalize(
                 sessionId: sessionId,
@@ -449,6 +481,16 @@ final class RecorderCoordinator {
                 destination: recording.destination,
                 reason: reason
             )
+        }
+    }
+
+    private func deactivateAudioSession() throws {
+        do {
+            try audioSession.deactivate()
+        } catch let error as RecorderPluginError {
+            throw error
+        } catch {
+            throw RecorderPluginError(code: .audioSessionFailure, retryable: true)
         }
     }
 
@@ -485,9 +527,13 @@ final class RecorderCoordinator {
             case .finalized: throw RecorderPluginError(code: .terminalConflict)
             }
         }
-        let recording = try requireActive(sessionId: sessionId)
-        recording.capture.stop()
-        audioSession.deactivate()
+        var recording = try requireActive(sessionId: sessionId)
+        if recording.state != .finalizing {
+            recording.state = .finalizing
+            active = recording
+            recording.capture.stop()
+        }
+        try deactivateAudioSession()
         let cleanup = files.remove(url: recording.destination)
         active = nil
         if cleanup == .pending || cleanup == .failed {

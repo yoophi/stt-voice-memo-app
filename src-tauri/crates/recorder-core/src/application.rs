@@ -99,6 +99,14 @@ impl<P: RecorderPort> RecorderService<P> {
         }
         let observed = self.lifecycle.current();
         if observed.session_id.as_ref() == Some(session_id)
+            && observed.state == RecordingState::Finalizing
+        {
+            return match observed.terminal_reason {
+                Some(winner_reason) => self.finish_stop(session_id, winner_reason),
+                None => Err(Self::terminal_conflict(session_id)),
+            };
+        }
+        if observed.session_id.as_ref() == Some(session_id)
             && matches!(
                 observed.state,
                 RecordingState::Finalized | RecordingState::Cancelled | RecordingState::Failed
@@ -113,13 +121,23 @@ impl<P: RecorderPort> RecorderService<P> {
             };
         }
         self.lifecycle.begin_finalization(session_id, reason)?;
+        self.finish_stop(session_id, reason)
+    }
+
+    fn finish_stop(
+        &mut self,
+        session_id: &RecordingSessionId,
+        reason: FinalizationReason,
+    ) -> Result<FinalizedRecording, RecorderError> {
         match self.port.stop(session_id, reason) {
             Ok(recording) => {
                 self.lifecycle.finalize(recording.clone());
                 Ok(recording)
             }
             Err(error) => {
-                self.lifecycle.fail(session_id, error.clone());
+                if !Self::audio_session_retryable(&error) {
+                    self.lifecycle.fail(session_id, error.clone());
+                }
                 Err(error)
             }
         }
@@ -139,7 +157,32 @@ impl<P: RecorderPort> RecorderService<P> {
                 TerminalOutcome::Finalized(_) => Err(Self::terminal_conflict(session_id)),
             };
         }
-        self.lifecycle.require_active_or_paused(session_id)?;
+        let observed = self.lifecycle.current();
+        if observed.session_id.as_ref() == Some(session_id)
+            && observed.state == RecordingState::Finalizing
+        {
+            return if observed.terminal_reason.is_some() {
+                Err(Self::terminal_conflict(session_id))
+            } else {
+                let result = self.port.cancel(session_id);
+                self.apply_cancel_result(session_id, result)
+            };
+        }
+        let current = self.refresh_session(Some(session_id))?;
+        if current.session_id.as_ref() == Some(session_id)
+            && current.state == RecordingState::Finalized
+        {
+            return Err(Self::terminal_conflict(session_id));
+        }
+        if current.state == RecordingState::Finalizing {
+            return if current.terminal_reason.is_some() {
+                Err(Self::terminal_conflict(session_id))
+            } else {
+                let result = self.port.cancel(session_id);
+                self.apply_cancel_result(session_id, result)
+            };
+        }
+        self.lifecycle.begin_cancellation(session_id)?;
         let result = self.port.cancel(session_id);
         self.apply_cancel_result(session_id, result)
     }
@@ -173,7 +216,9 @@ impl<P: RecorderPort> RecorderService<P> {
                 Err(error)
             }
             Err(error) => {
-                self.lifecycle.fail(session_id, error.clone());
+                if !Self::audio_session_retryable(&error) {
+                    self.lifecycle.fail(session_id, error.clone());
+                }
                 Err(error)
             }
         }
@@ -185,6 +230,10 @@ impl<P: RecorderPort> RecorderService<P> {
                 error.cleanup,
                 Some(CleanupOutcome::Pending | CleanupOutcome::Failed)
             )
+    }
+
+    fn audio_session_retryable(error: &RecorderError) -> bool {
+        error.retryable && error.code == RecorderErrorCode::AudioSessionFailure
     }
 
     fn refresh_session(

@@ -441,6 +441,17 @@ impl RecordingLifecycle {
         Ok(current)
     }
 
+    pub fn begin_cancellation(
+        &mut self,
+        session_id: &RecordingSessionId,
+    ) -> Result<RecordingSession, RecorderError> {
+        let mut current = self.require_active_or_paused(session_id)?;
+        current.state = RecordingState::Finalizing;
+        current.terminal_reason = None;
+        self.current = Some(current.clone());
+        Ok(current)
+    }
+
     pub fn finalize(&mut self, recording: FinalizedRecording) {
         let session_id = recording.session_id.clone();
         self.current = Some(RecordingSession {
