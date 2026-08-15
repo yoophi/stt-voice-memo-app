@@ -1,0 +1,1404 @@
+{
+  "openapi": "3.1.1",
+  "info": {
+    "title": "STT Voice Memo Transcription API",
+    "version": "1.0.0",
+    "description": "Provider-neutral asynchronous transcription contract for mobile clients."
+  },
+  "servers": [
+    {
+      "url": "/"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "x-contract-policy": {
+    "idempotency": {
+      "scope": "authenticated_owner_and_create_endpoint",
+      "fingerprint": [
+        "verified_audio_sha256",
+        "source_audio_id",
+        "normalized_language_hint",
+        "contract_version"
+      ],
+      "same_key_same_fingerprint": "return_existing_operation",
+      "same_key_different_fingerprint_status": 422,
+      "concurrent_reservation_conflict_status": 409,
+      "tombstone_days": 7
+    },
+    "cancellation": {
+      "invalidates_queued_or_processing_work": true,
+      "late_provider_result": "discard",
+      "content_available_after_delete": false
+    },
+    "ownership": {
+      "identity_source": "authenticated_principal",
+      "non_owner_status": 404,
+      "unknown_status": 404
+    },
+    "limits": {
+      "create_per_rolling_minute": 10,
+      "active_operations_per_user": 3,
+      "management_per_rolling_minute": 60,
+      "daily_usage_pre_dispatch": true,
+      "max_audio_bytes": 25000000,
+      "max_duration_seconds": 600,
+      "upload_timeout_seconds": 120,
+      "terminal_timeout_seconds": 600
+    },
+    "retention": {
+      "terminal_content_delete_hours": 24,
+      "idempotency_tombstone_days": 7,
+      "rejected_upload_delete": "immediately"
+    },
+    "logging": {
+      "excluded_fields": [
+        "audio",
+        "transcript",
+        "authorization",
+        "credential",
+        "provider_response",
+        "storage_path"
+      ]
+    },
+    "provider": {
+      "client_model_selection": false,
+      "credentials_in_client": false,
+      "calls_in_contract_tests": false,
+      "accepted_audio_formats": ["mp3", "mp4", "mpeg", "mpga", "m4a", "wav", "webm"]
+    },
+    "input_validation": {
+      "audio_parts": "exactly_one",
+      "integrity_source": "server_verified_decoded_bytes",
+      "declared_media_type_is_sufficient": false
+    }
+  },
+  "paths": {
+    "/v1/transcriptions": {
+      "post": {
+        "operationId": "createTranscription",
+        "summary": "Create or resolve a transcription operation",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 20,
+              "maxLength": 128,
+              "pattern": "^[!-~]+$"
+            }
+          },
+          {
+            "name": "X-Audio-SHA256",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": ["audio", "source_audio_id"],
+                "properties": {
+                  "audio": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "One finalized supported audio file."
+                  },
+                  "source_audio_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "language_hint": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 35,
+                    "pattern": "^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/FeatureNotAllowed"
+          },
+          "200": {
+            "description": "A terminal operation was resolved by an idempotent replay.",
+            "headers": {
+              "Idempotency-Replayed": {
+                "$ref": "#/components/headers/IdempotencyReplayed"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/CacheControl"
+              },
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranscriptionOperation"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "New or replayed active operation accepted.",
+            "headers": {
+              "Location": {
+                "$ref": "#/components/headers/Location"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/RetryAfter"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/CacheControl"
+              },
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranscriptionOperation"
+                },
+                "examples": {
+                  "queued": {
+                    "$ref": "#/components/examples/QueuedOperation"
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "$ref": "#/components/responses/OperationConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/AudioTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedAudio"
+          },
+          "422": {
+            "description": "The request is well-formed but fails semantic validation.",
+            "headers": {
+              "Cache-Control": { "$ref": "#/components/headers/CacheControl" },
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": { "$ref": "#/components/schemas/Problem422" },
+                "examples": {
+                  "audioDurationExceeded": {
+                    "$ref": "#/components/examples/AudioDurationExceeded"
+                  },
+                  "invalidLanguageHint": {
+                    "$ref": "#/components/examples/InvalidLanguageHint"
+                  },
+                  "checksumMismatch": {
+                    "$ref": "#/components/examples/ChecksumMismatch"
+                  },
+                  "idempotencyMismatch": {
+                    "$ref": "#/components/examples/IdempotencyMismatch"
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "A temporary request rate or account usage limit was exceeded.",
+            "headers": {
+              "Retry-After": { "$ref": "#/components/headers/RetryAfter" },
+              "Cache-Control": { "$ref": "#/components/headers/CacheControl" },
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": { "$ref": "#/components/schemas/Problem429" },
+                "examples": {
+                  "rateLimited": { "$ref": "#/components/examples/RateLimited" },
+                  "usageLimitExceeded": {
+                    "$ref": "#/components/examples/UsageLimitExceeded"
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ProviderUnavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/ProcessingTimeout"
+          }
+        }
+      }
+    },
+    "/v1/transcriptions/{operationId}": {
+      "parameters": [
+        {
+          "name": "operationId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        }
+      ],
+      "get": {
+        "operationId": "getTranscription",
+        "summary": "Read transcription status or final result",
+        "responses": {
+          "200": {
+            "description": "Current operation representation.",
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/RetryAfter"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/CacheControl"
+              },
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranscriptionOperation"
+                },
+                "examples": {
+                  "processing": {
+                    "$ref": "#/components/examples/ProcessingOperation"
+                  },
+                  "completed": {
+                    "$ref": "#/components/examples/CompletedOperation"
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/AuthenticationRequired" },
+          "403": { "$ref": "#/components/responses/FeatureNotAllowed" },
+          "404": { "$ref": "#/components/responses/OperationNotFound" },
+          "410": { "$ref": "#/components/responses/ContentExpired" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "503": { "$ref": "#/components/responses/ProviderUnavailable" },
+          "504": { "$ref": "#/components/responses/ProcessingTimeout" }
+        }
+      },
+      "delete": {
+        "operationId": "deleteTranscription",
+        "summary": "Cancel work and delete sensitive transcription content",
+        "responses": {
+          "202": {
+            "description": "Cancellation or sensitive-content cleanup is pending.",
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/RetryAfter"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/CacheControl"
+              },
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranscriptionOperation"
+                },
+                "examples": {
+                  "cancelled": {
+                    "$ref": "#/components/examples/CancelledOperation"
+                  },
+                  "deleting": {
+                    "$ref": "#/components/examples/DeletingOperation"
+                  },
+                  "cleanupRetrying": {
+                    "$ref": "#/components/examples/CleanupRetryingOperation"
+                  }
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "Sensitive content is absent; repeated deletion is complete.",
+            "headers": {
+              "Cache-Control": { "$ref": "#/components/headers/CacheControl" },
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/FeatureNotAllowed"
+          },
+          "404": {
+            "$ref": "#/components/responses/OperationNotFound"
+          },
+          "410": {
+            "$ref": "#/components/responses/ContentExpired"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ProviderUnavailable"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "User-scoped application access token."
+      }
+    },
+    "headers": {
+      "Location": {
+        "description": "Canonical operation resource path.",
+        "schema": {
+          "type": "string",
+          "example": "/v1/transcriptions/trn_01HZY8NQ4F7J9E2K3M5P6R8T0V"
+        }
+      },
+      "RetryAfter": {
+        "description": "Minimum seconds before polling or retry.",
+        "schema": {
+          "type": "integer",
+          "minimum": 0,
+          "example": 2
+        }
+      },
+      "CacheControl": {
+        "description": "Sensitive operation responses are not cacheable.",
+        "schema": {
+          "type": "string",
+          "const": "no-store"
+        }
+      },
+      "RequestId": {
+        "description": "Opaque backend support correlation identifier.",
+        "schema": {
+          "type": "string",
+          "example": "req_01HZY8PJ4F7J9E2K3M5P6R8T0V"
+        }
+      },
+      "IdempotencyReplayed": {
+        "description": "True when the canonical operation came from an earlier matching request.",
+        "schema": {
+          "type": "boolean",
+          "const": true
+        }
+      }
+    },
+    "responses": {
+      "MalformedRequest": {
+        "description": "The multipart request or required metadata is malformed.",
+        "$ref": "#/components/responses/ProblemResponse400"
+      },
+      "AuthenticationRequired": {
+        "description": "Authentication is missing or invalid.",
+        "$ref": "#/components/responses/ProblemResponse401"
+      },
+      "FeatureNotAllowed": {
+        "description": "The authenticated account cannot use transcription.",
+        "$ref": "#/components/responses/ProblemResponse403"
+      },
+      "AudioTooLarge": {
+        "description": "The audio exceeds the product byte limit.",
+        "$ref": "#/components/responses/ProblemResponse413"
+      },
+      "UnsupportedAudio": {
+        "description": "The audio media type or detected container is unsupported.",
+        "$ref": "#/components/responses/ProblemResponse415"
+      },
+      "OperationConflict": {
+        "description": "The idempotency reservation outcome is uncertain.",
+        "$ref": "#/components/responses/ProblemResponse409"
+      },
+      "IdempotencyMismatch": {
+        "description": "The key was reused for a different request fingerprint.",
+        "$ref": "#/components/responses/ProblemResponse422"
+      },
+      "RateLimited": {
+        "description": "The request may be retried after the stated delay.",
+        "$ref": "#/components/responses/ProblemResponse429"
+      },
+      "InternalError": {
+        "description": "The outcome is uncertain; resolve operation state before retrying.",
+        "$ref": "#/components/responses/ProblemResponse500"
+      },
+      "ProviderUnavailable": {
+        "description": "Transcription is temporarily unavailable.",
+        "$ref": "#/components/responses/ProblemResponse503"
+      },
+      "ProcessingTimeout": {
+        "description": "Processing outcome is uncertain; resolve operation state before retrying.",
+        "$ref": "#/components/responses/ProblemResponse504"
+      },
+      "OperationNotFound": {
+        "description": "The operation is unknown or not owned by the authenticated user.",
+        "$ref": "#/components/responses/ProblemResponse404"
+      },
+      "ContentExpired": {
+        "description": "The known operation representation has expired.",
+        "$ref": "#/components/responses/ProblemResponse410"
+      },
+      "ProblemResponse400": {
+        "description": "HTTP 400 problem detail.",
+        "headers": {
+          "Cache-Control": { "$ref": "#/components/headers/CacheControl" },
+          "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": { "$ref": "#/components/schemas/Problem400" }
+          }
+        }
+      },
+      "ProblemResponse401": {
+        "description": "HTTP 401 problem detail.",
+        "headers": {
+          "Cache-Control": { "$ref": "#/components/headers/CacheControl" },
+          "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": { "$ref": "#/components/schemas/Problem401" }
+          }
+        }
+      },
+      "ProblemResponse403": {
+        "description": "HTTP 403 problem detail.",
+        "headers": {
+          "Cache-Control": { "$ref": "#/components/headers/CacheControl" },
+          "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": { "$ref": "#/components/schemas/Problem403" }
+          }
+        }
+      },
+      "ProblemResponse404": {
+        "description": "HTTP 404 problem detail.",
+        "headers": {
+          "Cache-Control": { "$ref": "#/components/headers/CacheControl" },
+          "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": { "$ref": "#/components/schemas/Problem404" }
+          }
+        }
+      },
+      "ProblemResponse409": {
+        "description": "HTTP 409 problem detail.",
+        "headers": {
+          "Cache-Control": { "$ref": "#/components/headers/CacheControl" },
+          "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": { "$ref": "#/components/schemas/Problem409" }
+          }
+        }
+      },
+      "ProblemResponse410": {
+        "description": "HTTP 410 problem detail.",
+        "headers": {
+          "Cache-Control": { "$ref": "#/components/headers/CacheControl" },
+          "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": { "$ref": "#/components/schemas/Problem410" }
+          }
+        }
+      },
+      "ProblemResponse413": {
+        "description": "HTTP 413 problem detail.",
+        "headers": {
+          "Cache-Control": { "$ref": "#/components/headers/CacheControl" },
+          "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": { "$ref": "#/components/schemas/Problem413" }
+          }
+        }
+      },
+      "ProblemResponse415": {
+        "description": "HTTP 415 problem detail.",
+        "headers": {
+          "Cache-Control": { "$ref": "#/components/headers/CacheControl" },
+          "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": { "$ref": "#/components/schemas/Problem415" }
+          }
+        }
+      },
+      "ProblemResponse422": {
+        "description": "HTTP 422 problem detail.",
+        "headers": {
+          "Cache-Control": { "$ref": "#/components/headers/CacheControl" },
+          "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": { "$ref": "#/components/schemas/Problem422" }
+          }
+        }
+      },
+      "ProblemResponse429": {
+        "description": "HTTP 429 problem detail.",
+        "headers": {
+          "Retry-After": { "$ref": "#/components/headers/RetryAfter" },
+          "Cache-Control": { "$ref": "#/components/headers/CacheControl" },
+          "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": { "$ref": "#/components/schemas/Problem429" }
+          }
+        }
+      },
+      "ProblemResponse500": {
+        "description": "HTTP 500 problem detail.",
+        "headers": {
+          "Cache-Control": { "$ref": "#/components/headers/CacheControl" },
+          "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": { "$ref": "#/components/schemas/Problem500" }
+          }
+        }
+      },
+      "ProblemResponse503": {
+        "description": "HTTP 503 problem detail.",
+        "headers": {
+          "Retry-After": { "$ref": "#/components/headers/RetryAfter" },
+          "Cache-Control": { "$ref": "#/components/headers/CacheControl" },
+          "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": { "$ref": "#/components/schemas/Problem503" }
+          }
+        }
+      },
+      "ProblemResponse504": {
+        "description": "HTTP 504 problem detail.",
+        "headers": {
+          "Cache-Control": { "$ref": "#/components/headers/CacheControl" },
+          "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": { "$ref": "#/components/schemas/Problem504" }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "ProblemCategory": {
+        "type": "string",
+        "enum": ["retryable", "user_actionable", "terminal", "uncertain"]
+      },
+      "ProblemBase": {
+        "type": "object",
+        "required": ["type", "title", "status", "code", "category", "retryable", "request_id"],
+        "properties": {
+          "type": { "type": "string", "format": "uri-reference" },
+          "title": { "type": "string" },
+          "status": { "type": "integer", "minimum": 400, "maximum": 599 },
+          "detail": { "type": "string" },
+          "instance": { "type": "string", "format": "uri-reference" },
+          "code": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]+$" },
+          "category": { "$ref": "#/components/schemas/ProblemCategory" },
+          "retryable": { "type": "boolean" },
+          "request_id": { "type": "string" },
+          "retry_after_seconds": { "type": "integer", "minimum": 0 }
+        },
+        "additionalProperties": false
+      },
+      "FailureTuple": {
+        "oneOf": [
+          {
+            "properties": {
+              "status": { "const": 400 },
+              "code": { "const": "MALFORMED_REQUEST" },
+              "category": { "const": "terminal" },
+              "retryable": { "const": false }
+            }
+          },
+          {
+            "properties": {
+              "status": { "const": 401 },
+              "code": { "const": "AUTHENTICATION_REQUIRED" },
+              "category": { "const": "user_actionable" },
+              "retryable": { "const": false }
+            }
+          },
+          {
+            "properties": {
+              "status": { "const": 403 },
+              "code": { "const": "FEATURE_NOT_ALLOWED" },
+              "category": { "const": "user_actionable" },
+              "retryable": { "const": false }
+            }
+          },
+          {
+            "properties": {
+              "status": { "const": 404 },
+              "code": { "const": "OPERATION_NOT_FOUND" },
+              "category": { "const": "terminal" },
+              "retryable": { "const": false }
+            }
+          },
+          {
+            "properties": {
+              "status": { "const": 409 },
+              "code": { "const": "OPERATION_CONFLICT" },
+              "category": { "const": "uncertain" },
+              "retryable": { "const": false }
+            }
+          },
+          {
+            "properties": {
+              "status": { "const": 410 },
+              "code": { "const": "CONTENT_EXPIRED" },
+              "category": { "const": "terminal" },
+              "retryable": { "const": false }
+            }
+          },
+          {
+            "properties": {
+              "status": { "const": 413 },
+              "code": { "const": "AUDIO_TOO_LARGE" },
+              "category": { "const": "user_actionable" },
+              "retryable": { "const": false }
+            }
+          },
+          {
+            "properties": {
+              "status": { "const": 415 },
+              "code": { "const": "UNSUPPORTED_AUDIO" },
+              "category": { "const": "user_actionable" },
+              "retryable": { "const": false }
+            }
+          },
+          {
+            "properties": {
+              "status": { "const": 422 },
+              "code": { "const": "AUDIO_DURATION_EXCEEDED" },
+              "category": { "const": "user_actionable" },
+              "retryable": { "const": false }
+            }
+          },
+          {
+            "properties": {
+              "status": { "const": 422 },
+              "code": { "const": "INVALID_LANGUAGE_HINT" },
+              "category": { "const": "user_actionable" },
+              "retryable": { "const": false }
+            }
+          },
+          {
+            "properties": {
+              "status": { "const": 422 },
+              "code": { "const": "CHECKSUM_MISMATCH" },
+              "category": { "const": "terminal" },
+              "retryable": { "const": false }
+            }
+          },
+          {
+            "properties": {
+              "status": { "const": 422 },
+              "code": { "const": "IDEMPOTENCY_MISMATCH" },
+              "category": { "const": "terminal" },
+              "retryable": { "const": false }
+            }
+          },
+          {
+            "properties": {
+              "status": { "const": 429 },
+              "code": { "const": "RATE_LIMITED" },
+              "category": { "const": "retryable" },
+              "retryable": { "const": true }
+            }
+          },
+          {
+            "properties": {
+              "status": { "const": 429 },
+              "code": { "const": "USAGE_LIMIT_EXCEEDED" },
+              "category": { "const": "user_actionable" },
+              "retryable": { "const": false }
+            }
+          },
+          {
+            "properties": {
+              "status": { "const": 500 },
+              "code": { "const": "INTERNAL_ERROR" },
+              "category": { "const": "uncertain" },
+              "retryable": { "const": false }
+            }
+          },
+          {
+            "properties": {
+              "status": { "const": 503 },
+              "code": { "const": "PROVIDER_UNAVAILABLE" },
+              "category": { "const": "retryable" },
+              "retryable": { "const": true }
+            }
+          },
+          {
+            "properties": {
+              "status": { "const": 504 },
+              "code": { "const": "PROCESSING_TIMEOUT" },
+              "category": { "const": "uncertain" },
+              "retryable": { "const": false }
+            }
+          }
+        ]
+      },
+      "Problem": {
+        "allOf": [
+          { "$ref": "#/components/schemas/ProblemBase" },
+          { "$ref": "#/components/schemas/FailureTuple" }
+        ]
+      },
+      "Problem400": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Problem" },
+          { "type": "object", "properties": { "status": { "const": 400 } }, "required": ["status"] }
+        ]
+      },
+      "Problem401": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Problem" },
+          { "type": "object", "properties": { "status": { "const": 401 } }, "required": ["status"] }
+        ]
+      },
+      "Problem403": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Problem" },
+          { "type": "object", "properties": { "status": { "const": 403 } }, "required": ["status"] }
+        ]
+      },
+      "Problem404": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Problem" },
+          { "type": "object", "properties": { "status": { "const": 404 } }, "required": ["status"] }
+        ]
+      },
+      "Problem409": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Problem" },
+          { "type": "object", "properties": { "status": { "const": 409 } }, "required": ["status"] }
+        ]
+      },
+      "Problem410": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Problem" },
+          { "type": "object", "properties": { "status": { "const": 410 } }, "required": ["status"] }
+        ]
+      },
+      "Problem413": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Problem" },
+          { "type": "object", "properties": { "status": { "const": 413 } }, "required": ["status"] }
+        ]
+      },
+      "Problem415": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Problem" },
+          { "type": "object", "properties": { "status": { "const": 415 } }, "required": ["status"] }
+        ]
+      },
+      "Problem422": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Problem" },
+          { "type": "object", "properties": { "status": { "const": 422 } }, "required": ["status"] }
+        ]
+      },
+      "Problem429": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Problem" },
+          { "type": "object", "properties": { "status": { "const": 429 } }, "required": ["status"] }
+        ]
+      },
+      "Problem500": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Problem" },
+          { "type": "object", "properties": { "status": { "const": 500 } }, "required": ["status"] }
+        ]
+      },
+      "Problem503": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Problem" },
+          { "type": "object", "properties": { "status": { "const": 503 } }, "required": ["status"] }
+        ]
+      },
+      "Problem504": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Problem" },
+          { "type": "object", "properties": { "status": { "const": 504 } }, "required": ["status"] }
+        ]
+      },
+      "OperationState": {
+        "type": "string",
+        "enum": ["queued", "processing", "completed", "failed", "cancelled", "deleting", "deleted"]
+      },
+      "CleanupState": {
+        "type": "string",
+        "enum": ["not_scheduled", "scheduled", "in_progress", "completed", "failed_retrying"]
+      },
+      "TranscriptionResult": {
+        "type": "object",
+        "required": ["text"],
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "language": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "OperationFailure": {
+        "type": "object",
+        "required": ["code", "category", "retryable"],
+        "properties": {
+          "code": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]+$" },
+          "category": { "$ref": "#/components/schemas/ProblemCategory" },
+          "retryable": { "type": "boolean" },
+          "retry_after_seconds": { "type": "integer", "minimum": 0 }
+        },
+        "allOf": [{ "$ref": "#/components/schemas/FailureTuple" }],
+        "additionalProperties": false
+      },
+      "CleanupStatus": {
+        "type": "object",
+        "required": ["state", "content_available"],
+        "properties": {
+          "state": {
+            "$ref": "#/components/schemas/CleanupState"
+          },
+          "content_available": {
+            "type": "boolean"
+          },
+          "delete_by": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "state": { "enum": ["scheduled", "in_progress", "failed_retrying"] }
+              },
+              "required": ["state"]
+            },
+            "then": { "required": ["delete_by"] }
+          }
+        ],
+        "additionalProperties": false
+      },
+      "OperationLinks": {
+        "type": "object",
+        "required": ["self"],
+        "properties": {
+          "self": {
+            "type": "string",
+            "pattern": "^/v1/transcriptions/"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TranscriptionOperation": {
+        "type": "object",
+        "required": [
+          "id",
+          "request_id",
+          "source_audio_id",
+          "state",
+          "created_at",
+          "updated_at",
+          "cleanup",
+          "links"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "source_audio_id": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/OperationState"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "result": {
+            "$ref": "#/components/schemas/TranscriptionResult"
+          },
+          "failure": {
+            "$ref": "#/components/schemas/OperationFailure"
+          },
+          "cleanup": {
+            "$ref": "#/components/schemas/CleanupStatus"
+          },
+          "links": {
+            "$ref": "#/components/schemas/OperationLinks"
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "state": {
+                  "const": "completed"
+                }
+              },
+              "required": ["state"]
+            },
+            "then": {
+              "required": ["result"]
+            },
+            "else": {
+              "not": {
+                "required": ["result"]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "state": { "const": "failed" }
+              },
+              "required": ["state"]
+            },
+            "then": {
+              "required": ["failure"]
+            },
+            "else": {
+              "not": { "required": ["failure"] }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "state": {
+                  "enum": ["completed", "failed", "cancelled", "deleting", "deleted"]
+                }
+              },
+              "required": ["state"]
+            },
+            "then": {
+              "properties": {
+                "cleanup": { "required": ["delete_by"] }
+              }
+            }
+          }
+        ],
+        "additionalProperties": false
+      }
+    },
+    "examples": {
+      "QueuedOperation": {
+        "value": {
+          "id": "trn_01HZY8NQ4F7J9E2K3M5P6R8T0V",
+          "request_id": "req_01HZY8PJ4F7J9E2K3M5P6R8T0V",
+          "source_audio_id": "aud_01HZY8MZ4F7J9E2K3M5P6R8T0V",
+          "state": "queued",
+          "created_at": "2026-08-15T02:00:00Z",
+          "updated_at": "2026-08-15T02:00:00Z",
+          "cleanup": {
+            "state": "not_scheduled",
+            "content_available": true
+          },
+          "links": {
+            "self": "/v1/transcriptions/trn_01HZY8NQ4F7J9E2K3M5P6R8T0V"
+          }
+        }
+      },
+      "ProcessingOperation": {
+        "value": {
+          "id": "trn_01HZY8NQ4F7J9E2K3M5P6R8T0V",
+          "request_id": "req_01HZY8PJ4F7J9E2K3M5P6R8T0V",
+          "source_audio_id": "aud_01HZY8MZ4F7J9E2K3M5P6R8T0V",
+          "state": "processing",
+          "created_at": "2026-08-15T02:00:00Z",
+          "updated_at": "2026-08-15T02:00:03Z",
+          "cleanup": {
+            "state": "not_scheduled",
+            "content_available": true
+          },
+          "links": {
+            "self": "/v1/transcriptions/trn_01HZY8NQ4F7J9E2K3M5P6R8T0V"
+          }
+        }
+      },
+      "CompletedOperation": {
+        "value": {
+          "id": "trn_01HZY8NQ4F7J9E2K3M5P6R8T0V",
+          "request_id": "req_01HZY8PJ4F7J9E2K3M5P6R8T0V",
+          "source_audio_id": "aud_01HZY8MZ4F7J9E2K3M5P6R8T0V",
+          "state": "completed",
+          "created_at": "2026-08-15T02:00:00Z",
+          "updated_at": "2026-08-15T02:00:08Z",
+          "result": {
+            "text": "Example memo text.",
+            "language": "en"
+          },
+          "cleanup": {
+            "state": "scheduled",
+            "content_available": true,
+            "delete_by": "2026-08-16T02:00:08Z"
+          },
+          "links": {
+            "self": "/v1/transcriptions/trn_01HZY8NQ4F7J9E2K3M5P6R8T0V"
+          }
+        }
+      },
+      "MalformedRequest": {
+        "value": {
+          "type": "/problems/malformed-request",
+          "title": "Malformed request",
+          "status": 400,
+          "code": "MALFORMED_REQUEST",
+          "category": "terminal",
+          "retryable": false,
+          "request_id": "req_01HZY8PJ4F7J9E2K3M5P6R8T0V"
+        }
+      },
+      "AuthenticationRequired": {
+        "value": {
+          "type": "/problems/authentication-required",
+          "title": "Authentication required",
+          "status": 401,
+          "code": "AUTHENTICATION_REQUIRED",
+          "category": "user_actionable",
+          "retryable": false,
+          "request_id": "req_01HZY8PJ4F7J9E2K3M5P6R8T0V"
+        }
+      },
+      "FeatureNotAllowed": {
+        "value": {
+          "type": "/problems/feature-not-allowed",
+          "title": "Feature not allowed",
+          "status": 403,
+          "code": "FEATURE_NOT_ALLOWED",
+          "category": "user_actionable",
+          "retryable": false,
+          "request_id": "req_01HZY8PJ4F7J9E2K3M5P6R8T0V"
+        }
+      },
+      "OperationNotFound": {
+        "value": {
+          "type": "/problems/operation-not-found",
+          "title": "Operation not found",
+          "status": 404,
+          "code": "OPERATION_NOT_FOUND",
+          "category": "terminal",
+          "retryable": false,
+          "request_id": "req_01HZY8PJ4F7J9E2K3M5P6R8T0V"
+        }
+      },
+      "AudioTooLarge": {
+        "value": {
+          "type": "/problems/audio-too-large",
+          "title": "Audio too large",
+          "status": 413,
+          "code": "AUDIO_TOO_LARGE",
+          "category": "user_actionable",
+          "retryable": false,
+          "request_id": "req_01HZY8PJ4F7J9E2K3M5P6R8T0V"
+        }
+      },
+      "UnsupportedAudio": {
+        "value": {
+          "type": "/problems/unsupported-audio",
+          "title": "Unsupported audio",
+          "status": 415,
+          "code": "UNSUPPORTED_AUDIO",
+          "category": "user_actionable",
+          "retryable": false,
+          "request_id": "req_01HZY8PJ4F7J9E2K3M5P6R8T0V"
+        }
+      },
+      "AudioDurationExceeded": {
+        "value": {
+          "type": "/problems/audio-duration-exceeded",
+          "title": "Audio duration exceeded",
+          "status": 422,
+          "code": "AUDIO_DURATION_EXCEEDED",
+          "category": "user_actionable",
+          "retryable": false,
+          "request_id": "req_01HZY8PJ4F7J9E2K3M5P6R8T0V"
+        }
+      },
+      "InvalidLanguageHint": {
+        "value": {
+          "type": "/problems/invalid-language-hint",
+          "title": "Invalid language hint",
+          "status": 422,
+          "code": "INVALID_LANGUAGE_HINT",
+          "category": "user_actionable",
+          "retryable": false,
+          "request_id": "req_01HZY8PJ4F7J9E2K3M5P6R8T0V"
+        }
+      },
+      "ChecksumMismatch": {
+        "value": {
+          "type": "/problems/checksum-mismatch",
+          "title": "Checksum mismatch",
+          "status": 422,
+          "code": "CHECKSUM_MISMATCH",
+          "category": "terminal",
+          "retryable": false,
+          "request_id": "req_01HZY8PJ4F7J9E2K3M5P6R8T0V"
+        }
+      },
+      "UsageLimitExceeded": {
+        "value": {
+          "type": "/problems/usage-limit-exceeded",
+          "title": "Usage limit exceeded",
+          "status": 429,
+          "code": "USAGE_LIMIT_EXCEEDED",
+          "category": "user_actionable",
+          "retryable": false,
+          "request_id": "req_01HZY8PJ4F7J9E2K3M5P6R8T0V"
+        }
+      },
+      "FailedOperation": {
+        "value": {
+          "id": "trn_01HZY8NQ4F7J9E2K3M5P6R8T0V",
+          "request_id": "req_01HZY8PJ4F7J9E2K3M5P6R8T0V",
+          "source_audio_id": "aud_01HZY8MZ4F7J9E2K3M5P6R8T0V",
+          "state": "failed",
+          "created_at": "2026-08-15T02:00:00Z",
+          "updated_at": "2026-08-15T02:10:00Z",
+          "failure": {
+            "code": "PROCESSING_TIMEOUT",
+            "category": "uncertain",
+            "retryable": false
+          },
+          "cleanup": {
+            "state": "scheduled",
+            "content_available": true,
+            "delete_by": "2026-08-16T02:10:00Z"
+          },
+          "links": {
+            "self": "/v1/transcriptions/trn_01HZY8NQ4F7J9E2K3M5P6R8T0V"
+          }
+        }
+      },
+      "CancelledOperation": {
+        "value": {
+          "id": "trn_01HZY8NQ4F7J9E2K3M5P6R8T0V",
+          "request_id": "req_01HZY8PJ4F7J9E2K3M5P6R8T0V",
+          "source_audio_id": "aud_01HZY8MZ4F7J9E2K3M5P6R8T0V",
+          "state": "cancelled",
+          "created_at": "2026-08-15T02:00:00Z",
+          "updated_at": "2026-08-15T02:00:05Z",
+          "cleanup": {
+            "state": "scheduled",
+            "content_available": false,
+            "delete_by": "2026-08-16T02:00:05Z"
+          },
+          "links": {
+            "self": "/v1/transcriptions/trn_01HZY8NQ4F7J9E2K3M5P6R8T0V"
+          }
+        }
+      },
+      "DeletingOperation": {
+        "value": {
+          "id": "trn_01HZY8NQ4F7J9E2K3M5P6R8T0V",
+          "request_id": "req_01HZY8PJ4F7J9E2K3M5P6R8T0V",
+          "source_audio_id": "aud_01HZY8MZ4F7J9E2K3M5P6R8T0V",
+          "state": "deleting",
+          "created_at": "2026-08-15T02:00:00Z",
+          "updated_at": "2026-08-15T02:00:06Z",
+          "cleanup": {
+            "state": "in_progress",
+            "content_available": false,
+            "delete_by": "2026-08-16T02:00:06Z"
+          },
+          "links": {
+            "self": "/v1/transcriptions/trn_01HZY8NQ4F7J9E2K3M5P6R8T0V"
+          }
+        }
+      },
+      "CleanupRetryingOperation": {
+        "value": {
+          "id": "trn_01HZY8NQ4F7J9E2K3M5P6R8T0V",
+          "request_id": "req_01HZY8PJ4F7J9E2K3M5P6R8T0V",
+          "source_audio_id": "aud_01HZY8MZ4F7J9E2K3M5P6R8T0V",
+          "state": "deleting",
+          "created_at": "2026-08-15T02:00:00Z",
+          "updated_at": "2026-08-15T02:00:08Z",
+          "cleanup": {
+            "state": "failed_retrying",
+            "content_available": false,
+            "delete_by": "2026-08-16T02:00:08Z"
+          },
+          "links": {
+            "self": "/v1/transcriptions/trn_01HZY8NQ4F7J9E2K3M5P6R8T0V"
+          }
+        }
+      },
+      "DeletedOperation": {
+        "value": {
+          "id": "trn_01HZY8NQ4F7J9E2K3M5P6R8T0V",
+          "request_id": "req_01HZY8PJ4F7J9E2K3M5P6R8T0V",
+          "source_audio_id": "aud_01HZY8MZ4F7J9E2K3M5P6R8T0V",
+          "state": "deleted",
+          "created_at": "2026-08-15T02:00:00Z",
+          "updated_at": "2026-08-15T02:00:07Z",
+          "cleanup": {
+            "state": "completed",
+            "content_available": false,
+            "delete_by": "2026-08-16T02:00:07Z"
+          },
+          "links": {
+            "self": "/v1/transcriptions/trn_01HZY8NQ4F7J9E2K3M5P6R8T0V"
+          }
+        }
+      },
+      "OperationConflict": {
+        "value": {
+          "type": "/problems/operation-conflict",
+          "title": "Operation conflict",
+          "status": 409,
+          "code": "OPERATION_CONFLICT",
+          "category": "uncertain",
+          "retryable": false,
+          "request_id": "req_01HZY8PJ4F7J9E2K3M5P6R8T0V"
+        }
+      },
+      "ContentExpired": {
+        "value": {
+          "type": "/problems/content-expired",
+          "title": "Content expired",
+          "status": 410,
+          "code": "CONTENT_EXPIRED",
+          "category": "terminal",
+          "retryable": false,
+          "request_id": "req_01HZY8PJ4F7J9E2K3M5P6R8T0V"
+        }
+      },
+      "IdempotencyMismatch": {
+        "value": {
+          "type": "/problems/idempotency-mismatch",
+          "title": "Idempotency mismatch",
+          "status": 422,
+          "code": "IDEMPOTENCY_MISMATCH",
+          "category": "terminal",
+          "retryable": false,
+          "request_id": "req_01HZY8PJ4F7J9E2K3M5P6R8T0V"
+        }
+      },
+      "RateLimited": {
+        "value": {
+          "type": "/problems/rate-limited",
+          "title": "Rate limited",
+          "status": 429,
+          "code": "RATE_LIMITED",
+          "category": "retryable",
+          "retryable": true,
+          "request_id": "req_01HZY8PJ4F7J9E2K3M5P6R8T0V",
+          "retry_after_seconds": 30
+        }
+      },
+      "InternalError": {
+        "value": {
+          "type": "/problems/internal-error",
+          "title": "Internal error",
+          "status": 500,
+          "code": "INTERNAL_ERROR",
+          "category": "uncertain",
+          "retryable": false,
+          "request_id": "req_01HZY8PJ4F7J9E2K3M5P6R8T0V"
+        }
+      },
+      "ProviderUnavailable": {
+        "value": {
+          "type": "/problems/provider-unavailable",
+          "title": "Provider unavailable",
+          "status": 503,
+          "code": "PROVIDER_UNAVAILABLE",
+          "category": "retryable",
+          "retryable": true,
+          "request_id": "req_01HZY8PJ4F7J9E2K3M5P6R8T0V",
+          "retry_after_seconds": 5
+        }
+      },
+      "ProcessingTimeout": {
+        "value": {
+          "type": "/problems/processing-timeout",
+          "title": "Processing timeout",
+          "status": 504,
+          "code": "PROCESSING_TIMEOUT",
+          "category": "uncertain",
+          "retryable": false,
+          "request_id": "req_01HZY8PJ4F7J9E2K3M5P6R8T0V"
+        }
+      }
+    }
+  }
+}

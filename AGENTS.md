@@ -32,10 +32,11 @@
 
 ## Current Feature
 
-- Plan: `specs/001-tauri-app-init/plan.md`
-- Specification: `specs/001-tauri-app-init/spec.md`
-- Scope: reproducible React/Tauri foundation, architecture boundaries, developer
-  validation, and physical iOS/Android app-shell verification.
+- Plan: `specs/003-backend-transcription-api/plan.md`
+- Specification: `specs/003-backend-transcription-api/spec.md`
+- Scope: the authenticated, asynchronous, idempotent, versioned transcription
+  API contract and no-network contract tests. Production backend, provider calls,
+  native recording, Rust integration, and mobile UI remain deferred.
 
 ## References
 
