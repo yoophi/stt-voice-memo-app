@@ -443,3 +443,43 @@ fn completion_winning_cancel_cas_prevents_remote_delete() {
         );
     });
 }
+
+#[test]
+fn cancellation_winning_completion_cas_never_returns_transcript() {
+    block_on(async {
+        let repository = Arc::new(Repository::default());
+        let backend = Arc::new(Backend::default());
+        backend
+            .create_results
+            .lock()
+            .unwrap()
+            .push_back(Ok(active(BackendState::Queued)));
+        let service = service(
+            repository.clone(),
+            backend.clone(),
+            Arc::new(Connectivity(AtomicBool::new(true))),
+            Arc::new(Time(AtomicU64::new(100))),
+        );
+        let queued = service
+            .submit(
+                SourceAudioId::parse("source-1").unwrap(),
+                TranscriptionOptions::default(),
+            )
+            .await
+            .unwrap();
+        let mut completed_remote = active(BackendState::Completed);
+        completed_remote.result = Some(BackendTranscript::new("must not escape", None));
+        backend
+            .get_results
+            .lock()
+            .unwrap()
+            .push_back(Ok(completed_remote));
+        let mut cancelled = queued.operation.clone();
+        cancelled.cancel_local().unwrap();
+        *repository.conflict_replacement.lock().unwrap() = Some(cancelled);
+
+        let outcome = service.status(queued.operation.id().clone()).await.unwrap();
+        assert_eq!(outcome.operation.phase(), OperationPhase::Cancelled);
+        assert!(outcome.transcript.is_none());
+    });
+}

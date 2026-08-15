@@ -253,6 +253,7 @@ impl Failure {
 pub enum OperationPhase {
     Ready,
     WaitingForNetwork,
+    WaitingForAuthorization,
     Uploading,
     Queued,
     Processing,
@@ -365,6 +366,8 @@ pub struct TranscriptionOperation {
     backend_request_id: Option<BackendRequestId>,
     event_sequence: u64,
     revision: u64,
+    #[serde(default)]
+    cancel_requested: bool,
 }
 
 impl TranscriptionOperation {
@@ -390,6 +393,7 @@ impl TranscriptionOperation {
             backend_request_id: None,
             event_sequence: 0,
             revision: 0,
+            cancel_requested: false,
         }
     }
 
@@ -438,6 +442,9 @@ impl TranscriptionOperation {
     pub fn revision(&self) -> u64 {
         self.revision
     }
+    pub fn cancel_requested(&self) -> bool {
+        self.cancel_requested
+    }
 
     pub fn set_revision(&mut self, revision: u64) {
         self.revision = revision;
@@ -455,14 +462,27 @@ impl TranscriptionOperation {
         Ok(())
     }
 
+    pub fn mark_waiting_for_authorization(&mut self, failure: Failure) -> Result<(), DomainError> {
+        self.require_no_terminal()?;
+        if failure.category != FailureCategory::UserActionable {
+            return Err(DomainError::InvalidValue("authorization failure"));
+        }
+        self.phase = OperationPhase::WaitingForAuthorization;
+        self.failure = Some(failure);
+        self.retry = None;
+        Ok(())
+    }
+
     pub fn begin_upload(&mut self, now_ms: u64) -> Result<(), DomainError> {
         self.require_no_terminal()?;
         if !matches!(
             self.phase,
             OperationPhase::Ready
                 | OperationPhase::WaitingForNetwork
+                | OperationPhase::WaitingForAuthorization
                 | OperationPhase::RetryableFailure
                 | OperationPhase::Uncertain
+                | OperationPhase::Cancelling
         ) {
             return Err(DomainError::InvalidTransition);
         }
@@ -572,11 +592,13 @@ impl TranscriptionOperation {
 
     pub fn begin_cancel(&mut self) -> Result<(), DomainError> {
         self.require_no_terminal()?;
+        self.cancel_requested = true;
         self.phase = OperationPhase::Cancelling;
         Ok(())
     }
 
     pub fn cancel_local(&mut self) -> Result<(), DomainError> {
+        self.cancel_requested = true;
         self.choose_terminal(TerminalWinner::Cancelled)?;
         self.phase = OperationPhase::Cancelled;
         self.cleanup = CleanupDisposition::Completed;
@@ -585,6 +607,7 @@ impl TranscriptionOperation {
     }
 
     pub fn confirm_cancel(&mut self, cleanup: CleanupDisposition) -> Result<(), DomainError> {
+        self.cancel_requested = true;
         self.choose_terminal(TerminalWinner::Cancelled)?;
         self.cleanup = cleanup;
         self.phase = if matches!(self.cleanup, CleanupDisposition::Completed) {
@@ -601,6 +624,19 @@ impl TranscriptionOperation {
             return Err(DomainError::TerminalConflict);
         }
         self.phase = OperationPhase::CleanupPending;
+        self.failure = Some(failure);
+        Ok(())
+    }
+
+    pub fn mark_cancel_reconciliation_needed(
+        &mut self,
+        failure: Failure,
+    ) -> Result<(), DomainError> {
+        self.require_no_terminal()?;
+        if !self.cancel_requested {
+            return Err(DomainError::InvalidTransition);
+        }
+        self.phase = OperationPhase::Cancelling;
         self.failure = Some(failure);
         Ok(())
     }

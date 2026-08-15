@@ -149,7 +149,7 @@ events.
 - **FR-005**: Submission MUST use the versioned application-backend contract and
   MUST NOT communicate directly with a transcription provider.
 - **FR-006**: The system MUST distinguish at least ready, waiting-for-network,
-  uploading, queued, processing, completed, retryable-failure,
+  waiting-for-authorization, uploading, queued, processing, completed, retryable-failure,
   terminal-failure, cancelling, cancelled, and cleanup-pending outcomes.
 - **FR-007**: Only a completed operation with non-blank final text MAY expose an
   authoritative transcript; partial or streaming text MUST NOT become a final

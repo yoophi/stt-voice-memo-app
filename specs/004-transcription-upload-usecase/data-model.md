@@ -53,6 +53,7 @@ immediately before every streamed request.
 | `backendRequestId`   | Optional safe support correlation from the latest response                       |
 | `eventSequence`      | Monotonic sequence for advisory events                                           |
 | `revision`           | Repository compare-and-swap version                                              |
+| `cancelRequested`    | Durable intent set before stopping transfer or requesting remote deletion        |
 
 Transcript text is returned only in an authorized completed command result. It is
 not persisted in the operation record; Issue #7 owns durable transcript/memo text.
@@ -62,6 +63,7 @@ not persisted in the operation record; Issue #7 owns durable transcript/memo tex
 ```text
 ready
   -> waiting_for_network
+  -> waiting_for_authorization
   -> uploading
   -> queued
   -> processing
@@ -76,23 +78,25 @@ ready
 
 ### Transition rules
 
-| From                                                | Event                                      | To / outcome                                               |
-| --------------------------------------------------- | ------------------------------------------ | ---------------------------------------------------------- |
-| none                                                | create local intent                        | `ready`, persisted before network                          |
-| `ready`, `waiting_for_network`, `retryable_failure` | submit/retry while online                  | `uploading`, same IDs, increment attempt                   |
-| `ready`, `waiting_for_network`                      | submit while offline                       | `waiting_for_network`, no network call                     |
-| `uploading`                                         | create accepted                            | backend `queued` or `processing`; store backend ID         |
-| `uploading` without backend ID                      | response lost/timeout                      | `uncertain`; exact create replay is permitted              |
-| non-terminal with backend ID                        | status queued/processing                   | `queued` / `processing`                                    |
-| non-terminal                                        | completed with valid text                  | `completed`, winner set once                               |
-| non-terminal                                        | retryable failure                          | `retryable_failure`, retry guidance stored                 |
-| non-terminal                                        | uncertain failure                          | `uncertain`, no blind automatic POST                       |
-| non-terminal                                        | terminal/user-actionable/malformed failure | `terminal_failure`, winner set once                        |
-| local-only non-terminal                             | cancel                                     | `cancelled`, winner set; no remote call                    |
-| remote non-terminal                                 | cancel intent                              | `cancelling`, intent persisted before DELETE               |
-| `cancelling`                                        | DELETE confirmed cancelled/deleted/204     | `cancelled`; cleanup completed or pending                  |
-| `cancelling`                                        | DELETE outcome unknown                     | `cleanup_pending`; retain cancel intent and reconcile      |
-| any terminal                                        | later conflicting terminal event           | stored winner returned; event ignored or conflict reported |
+| From                                     | Event                                      | To / outcome                                               |
+| ---------------------------------------- | ------------------------------------------ | ---------------------------------------------------------- |
+| none                                     | create local intent                        | `ready`, persisted before network                          |
+| `ready`, waiting, or `retryable_failure` | submit/retry while online and authorized   | `uploading`, same IDs, increment attempt                   |
+| `ready`, `waiting_for_network`           | submit while offline                       | `waiting_for_network`, no network call                     |
+| non-terminal                             | authorization unavailable/expired          | `waiting_for_authorization`; explicit retry after refresh  |
+| `uploading`                              | create accepted                            | backend `queued` or `processing`; store backend ID         |
+| `uploading` without backend ID           | response lost/timeout                      | `uncertain`; exact create replay is permitted              |
+| non-terminal with backend ID             | status queued/processing                   | `queued` / `processing`                                    |
+| non-terminal                             | completed with valid text                  | `completed`, winner set once                               |
+| non-terminal                             | retryable failure                          | `retryable_failure`, retry guidance stored                 |
+| non-terminal                             | uncertain failure                          | `uncertain`, no blind automatic POST                       |
+| non-terminal                             | terminal/user-actionable/malformed failure | `terminal_failure`, winner set once                        |
+| local-only non-uploading                 | cancel                                     | `cancelled`, winner set; no remote call                    |
+| `uploading` without backend ID           | cancel                                     | persist intent, stop transfer, then reconcile exact replay |
+| remote non-terminal                      | cancel intent                              | `cancelling`, intent persisted before DELETE               |
+| `cancelling`                             | DELETE confirmed cancelled/deleted/204     | `cancelled`; cleanup completed or pending                  |
+| `cancelling`                             | DELETE outcome unknown                     | `cleanup_pending`; retain cancel intent and reconcile      |
+| any terminal                             | later conflicting terminal event           | stored winner returned; event ignored or conflict reported |
 
 ## Failure
 

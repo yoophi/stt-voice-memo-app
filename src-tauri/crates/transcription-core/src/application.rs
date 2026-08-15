@@ -159,6 +159,9 @@ impl TranscriptionService {
             OperationPhase::Uncertain if current.backend_operation_id().is_some() => {
                 return self.status(operation_id).await;
             }
+            OperationPhase::WaitingForAuthorization if current.backend_operation_id().is_some() => {
+                return self.status(operation_id).await;
+            }
             OperationPhase::Cancelling | OperationPhase::CleanupPending
                 if current.backend_operation_id().is_some() =>
             {
@@ -168,6 +171,7 @@ impl TranscriptionService {
                 debug_assert!(current.recover_interrupted_upload());
                 current = self.commit(current).await?;
             }
+            OperationPhase::Cancelling if current.backend_operation_id().is_none() => {}
             _ => {}
         }
         let source = self.sources.inspect(current.source_audio_id()).await?;
@@ -194,6 +198,18 @@ impl TranscriptionService {
                 return self.dispatch_delete(current).await;
             }
             _ => {}
+        }
+        if current.backend_operation_id().is_none() && current.phase() == OperationPhase::Uploading
+        {
+            let mut cancelling = current;
+            cancelling.begin_cancel()?;
+            let cancelling = self.commit(cancelling).await?;
+            self.backend.cancel_local(cancelling.id());
+            return Ok(OperationOutcome::operation(cancelling));
+        }
+        if current.backend_operation_id().is_none() && current.phase() == OperationPhase::Cancelling
+        {
+            return Ok(OperationOutcome::operation(current));
         }
         if current.backend_operation_id().is_none() {
             let mut cancelled = current;
@@ -252,11 +268,19 @@ impl TranscriptionService {
                     FailureCategory::UserActionable,
                     None,
                 )?;
-                operation.fail(failure, self.clock.now_ms())?;
+                operation.mark_waiting_for_authorization(failure)?;
                 let _ = self.commit(operation).await?;
                 return Err(ApplicationError::Authorization(error));
             }
         };
+        let (progress_sender, progress_receiver) = std::sync::mpsc::channel();
+        let operations = self.operations.clone();
+        let events = self.events.clone();
+        let progress_task = std::thread::spawn(move || {
+            while let Ok(observation) = progress_receiver.recv() {
+                futures::executor::block_on(persist_progress(&operations, &events, observation));
+            }
+        });
         let request = CreateTranscriptionRequest {
             operation_id: operation.id().clone(),
             source,
@@ -264,11 +288,14 @@ impl TranscriptionService {
             options: operation.options().clone(),
             attempt: operation.attempt(),
             authorization,
-            progress: Arc::new(NoopProgress),
+            progress: Arc::new(ProgressRecorder(progress_sender)),
         };
-        match self.backend.create(request).await {
-            Ok(remote) => self.apply_backend(operation, remote).await,
-            Err(error) => self.apply_port_failure(operation, error).await,
+        let result = self.backend.create(request).await;
+        let _ = progress_task.join();
+        let latest = self.operations.load(operation.id()).await?;
+        match result {
+            Ok(remote) => self.apply_backend(latest, remote).await,
+            Err(error) => self.apply_port_failure(latest, error).await,
         }
     }
 
@@ -308,6 +335,14 @@ impl TranscriptionService {
         if operation.terminal_winner().is_some() {
             return Ok(OperationOutcome::operation(operation));
         }
+        if operation.cancel_requested() {
+            operation.mark_cancel_reconciliation_needed(error.failure)?;
+            return Ok(OperationOutcome::operation(self.commit(operation).await?));
+        }
+        if error.failure.code == "AUTHENTICATION_REQUIRED" {
+            operation.mark_waiting_for_authorization(error.failure)?;
+            return Ok(OperationOutcome::operation(self.commit(operation).await?));
+        }
         operation.fail(error.failure, self.clock.now_ms())?;
         Ok(OperationOutcome::operation(self.commit(operation).await?))
     }
@@ -317,6 +352,10 @@ impl TranscriptionService {
         mut operation: TranscriptionOperation,
         remote: BackendOperation,
     ) -> Result<OperationOutcome, ApplicationError> {
+        let latest = self.operations.load(operation.id()).await?;
+        if latest.revision() > operation.revision() {
+            operation = latest;
+        }
         if remote.source_audio_id != *operation.source_audio_id() {
             return self.malformed(operation).await;
         }
@@ -334,7 +373,7 @@ impl TranscriptionService {
             if operation.phase() == OperationPhase::Completed
                 && remote.state == BackendState::Completed
             {
-                let transcript = self.final_transcript(&operation, &remote)?;
+                let transcript = self.final_transcript_with_ids(&operation, &remote)?;
                 return Ok(OperationOutcome {
                     operation,
                     transcript: Some(transcript),
@@ -343,7 +382,23 @@ impl TranscriptionService {
             return Ok(OperationOutcome::operation(operation));
         }
 
-        let transcript = match remote.state {
+        if operation.cancel_requested()
+            && !matches!(
+                remote.state,
+                BackendState::Cancelled | BackendState::Deleted | BackendState::Deleting
+            )
+        {
+            operation.observe_backend_active(
+                remote.id,
+                OperationPhase::Processing,
+                remote.request_id,
+            )?;
+            operation.begin_cancel()?;
+            let operation = self.commit(operation).await?;
+            return Box::pin(self.dispatch_delete(operation)).await;
+        }
+
+        let transcript_candidate = match remote.state {
             BackendState::Queued => {
                 operation.observe_backend_active(
                     remote.id,
@@ -398,18 +453,15 @@ impl TranscriptionService {
             }
         };
         let operation = self.commit(operation).await?;
+        let transcript = if operation.phase() == OperationPhase::Completed {
+            transcript_candidate
+        } else {
+            None
+        };
         Ok(OperationOutcome {
             operation,
             transcript,
         })
-    }
-
-    fn final_transcript(
-        &self,
-        operation: &TranscriptionOperation,
-        remote: &BackendOperation,
-    ) -> Result<FinalTranscript, ApplicationError> {
-        self.final_transcript_with_ids(operation, remote)
     }
 
     fn final_transcript_with_ids(
@@ -486,7 +538,41 @@ impl TranscriptionService {
     }
 }
 
-struct NoopProgress;
-impl UploadProgressSink for NoopProgress {
-    fn observe(&self, _observation: UploadObservation) {}
+struct ProgressRecorder(std::sync::mpsc::Sender<UploadObservation>);
+
+impl UploadProgressSink for ProgressRecorder {
+    fn observe(&self, observation: UploadObservation) {
+        let _ = self.0.send(observation);
+    }
+}
+
+async fn persist_progress(
+    operations: &Arc<dyn OperationRepository>,
+    events: &Arc<dyn OperationEventSink>,
+    observation: UploadObservation,
+) {
+    for _ in 0..3 {
+        let Ok(mut operation) = operations.load(&observation.operation_id).await else {
+            return;
+        };
+        let expected_revision = operation.revision();
+        if !operation
+            .observe_progress(observation.clone())
+            .unwrap_or(false)
+        {
+            return;
+        }
+        operation.next_event_sequence();
+        match operations
+            .compare_and_swap(expected_revision, operation)
+            .await
+        {
+            Ok(committed) => {
+                events.emit(TranscriptionService::event(&committed));
+                return;
+            }
+            Err(RepositoryError::RevisionConflict) => continue,
+            Err(_) => return,
+        }
+    }
 }

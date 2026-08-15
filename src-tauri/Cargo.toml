@@ -39,6 +39,7 @@ tauri-plugin-recorder = { path = "plugins/recorder" }
 transcription-core = { path = "crates/transcription-core" }
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt", "sync", "time"] }
 tokio-util = { version = "0.7", features = ["io", "rt"] }
+time = { version = "0.3", features = ["parsing"] }
 url = "2"
 uuid = { version = "1", features = ["v4"] }
 

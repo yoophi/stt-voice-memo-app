@@ -1,6 +1,9 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use async_trait::async_trait;
@@ -117,6 +120,7 @@ impl OperationEventSink for Events {
 struct Backend {
     calls: Mutex<Vec<&'static str>>,
     state: Mutex<BackendState>,
+    local_cancelled: AtomicBool,
 }
 
 impl Backend {
@@ -124,18 +128,34 @@ impl Backend {
         Self {
             calls: Mutex::new(vec![]),
             state: Mutex::new(state),
+            local_cancelled: AtomicBool::new(false),
         }
     }
 }
 
 #[async_trait]
 impl TranscriptionPort for Backend {
+    fn cancel_local(&self, _: &TranscriptionOperationId) -> bool {
+        self.local_cancelled.store(true, Ordering::SeqCst);
+        true
+    }
+
     async fn create(
         &self,
         request: CreateTranscriptionRequest,
     ) -> Result<BackendOperation, TranscriptionPortError> {
         self.calls.lock().unwrap().push("create");
         assert_eq!(request.operation_id.to_string().len(), 36);
+        request.progress.observe(
+            UploadObservation::new(
+                request.operation_id.clone(),
+                request.attempt,
+                1,
+                request.source.byte_length,
+                request.source.byte_length,
+            )
+            .unwrap(),
+        );
         Ok(BackendOperation::active(
             BackendOperationId::parse("backend-1").unwrap(),
             request.source.id,
@@ -202,12 +222,86 @@ fn submit_deduplicates_then_status_returns_one_nonblank_final_result() {
             .await
             .unwrap();
         assert_eq!(first.operation.id(), duplicate.operation.id());
+        assert_eq!(first.operation.progress().unwrap().supplied_bytes, 128);
         assert_eq!(backend.calls.lock().unwrap().as_slice(), ["create", "get"]);
 
         *backend.state.lock().unwrap() = BackendState::Completed;
         let completed = service.status(first.operation.id().clone()).await.unwrap();
         assert_eq!(completed.operation.phase(), OperationPhase::Completed);
         assert_eq!(completed.transcript.unwrap().text(), "final text");
+    });
+}
+
+#[test]
+fn cancelling_an_upload_requests_transport_cancellation_and_keeps_reconciliation_pending() {
+    block_on(async {
+        let repository = Arc::new(MemoryRepository::default());
+        let backend = Arc::new(Backend::new(BackendState::Queued));
+        let mut candidate = TranscriptionOperation::new(
+            TranscriptionOperationId::parse(LOCAL_ID).unwrap(),
+            SourceAudioId::parse("source-1").unwrap(),
+            SubmissionFingerprint::parse(&"a".repeat(64)).unwrap(),
+            TranscriptionOptions::default(),
+        );
+        candidate.begin_upload(100).unwrap();
+        let stored = repository.get_or_create(candidate).await.unwrap().operation;
+        let service = service(repository, backend.clone());
+
+        let outcome = service.cancel(stored.id().clone()).await.unwrap();
+        assert_eq!(outcome.operation.phase(), OperationPhase::Cancelling);
+        assert!(outcome.operation.cancel_requested());
+        assert!(backend.local_cancelled.load(Ordering::SeqCst));
+    });
+}
+
+struct RefreshableAuth(AtomicBool);
+
+#[async_trait]
+impl AuthorizationPort for RefreshableAuth {
+    async fn acquire(&self) -> Result<AccessToken, AuthorizationError> {
+        if self.0.load(Ordering::SeqCst) {
+            AccessToken::new("refreshed-token")
+        } else {
+            Err(AuthorizationError::Unavailable)
+        }
+    }
+}
+
+#[test]
+fn authentication_required_remains_recoverable_after_token_refresh() {
+    block_on(async {
+        let repository = Arc::new(MemoryRepository::default());
+        let backend = Arc::new(Backend::new(BackendState::Queued));
+        let authorization = Arc::new(RefreshableAuth(AtomicBool::new(false)));
+        let service = TranscriptionService::new(
+            backend,
+            Arc::new(FixtureSource),
+            repository,
+            authorization.clone(),
+            Arc::new(Online),
+            Arc::new(TestClock),
+            Arc::new(Events::default()),
+        );
+
+        assert!(matches!(
+            service
+                .submit(
+                    SourceAudioId::parse("source-1").unwrap(),
+                    TranscriptionOptions::default(),
+                )
+                .await,
+            Err(ApplicationError::Authorization(_))
+        ));
+        let waiting = service.recover().await.unwrap().pop().unwrap();
+        assert_eq!(
+            waiting.operation.phase(),
+            OperationPhase::WaitingForAuthorization
+        );
+        assert!(waiting.operation.terminal_winner().is_none());
+
+        authorization.0.store(true, Ordering::SeqCst);
+        let retried = service.retry(waiting.operation.id().clone()).await.unwrap();
+        assert_eq!(retried.operation.phase(), OperationPhase::Queued);
     });
 }
 

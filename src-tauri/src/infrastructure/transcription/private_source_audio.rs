@@ -23,14 +23,18 @@ struct SourceManifest {
 
 pub struct PrivateSourceAudioStore {
     root: PathBuf,
+    manifest_root: PathBuf,
     manifests: RwLock<HashMap<SourceAudioId, SourceManifest>>,
 }
 
 impl PrivateSourceAudioStore {
     pub fn new(root: PathBuf) -> Result<Self, SourceAudioError> {
         fs::create_dir_all(&root).map_err(|_| SourceAudioError::Unavailable)?;
+        let manifest_root = root.join(".manifests");
+        fs::create_dir_all(&manifest_root).map_err(|_| SourceAudioError::Unavailable)?;
         Ok(Self {
             root,
+            manifest_root,
             manifests: RwLock::new(HashMap::new()),
         })
     }
@@ -59,6 +63,7 @@ impl PrivateSourceAudioStore {
             duration_ms,
             sha256,
         };
+        self.persist_manifest(&source_id, &manifest)?;
         self.manifests
             .write()
             .map_err(|_| SourceAudioError::Unavailable)?
@@ -67,11 +72,7 @@ impl PrivateSourceAudioStore {
     }
 
     pub fn resolve_path(&self, source_id: &SourceAudioId) -> Result<PathBuf, SourceAudioError> {
-        let manifests = self
-            .manifests
-            .read()
-            .map_err(|_| SourceAudioError::Unavailable)?;
-        let manifest = manifests.get(source_id).ok_or(SourceAudioError::NotFound)?;
+        let manifest = self.load_manifest(source_id)?;
         self.resolve_contained(&manifest.relative_path)
     }
 
@@ -79,11 +80,7 @@ impl PrivateSourceAudioStore {
         &self,
         source_id: &SourceAudioId,
     ) -> Result<SourceDescriptor, SourceAudioError> {
-        let manifests = self
-            .manifests
-            .read()
-            .map_err(|_| SourceAudioError::Unavailable)?;
-        let manifest = manifests.get(source_id).ok_or(SourceAudioError::NotFound)?;
+        let manifest = self.load_manifest(source_id)?;
         let path = self.resolve_contained(&manifest.relative_path)?;
         let bytes = fs::read(&path).map_err(|_| SourceAudioError::NotFound)?;
         if bytes.len() as u64 != manifest.byte_length || hex_digest(&bytes) != manifest.sha256 {
@@ -91,13 +88,75 @@ impl PrivateSourceAudioStore {
         }
         SourceDescriptor::new(
             source_id.clone(),
-            manifest.media_type.clone(),
-            manifest.file_extension.clone(),
+            manifest.media_type,
+            manifest.file_extension,
             manifest.byte_length,
             manifest.duration_ms,
-            manifest.sha256.clone(),
+            manifest.sha256,
         )
         .map_err(|_| SourceAudioError::Invalid)
+    }
+
+    fn manifest_path(&self, source_id: &SourceAudioId) -> PathBuf {
+        self.manifest_root.join(format!(
+            "{}.json",
+            hex_digest(source_id.as_str().as_bytes())
+        ))
+    }
+
+    fn load_manifest(&self, source_id: &SourceAudioId) -> Result<SourceManifest, SourceAudioError> {
+        if let Some(manifest) = self
+            .manifests
+            .read()
+            .map_err(|_| SourceAudioError::Unavailable)?
+            .get(source_id)
+            .cloned()
+        {
+            return Ok(manifest);
+        }
+        let bytes = fs::read(self.manifest_path(source_id)).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                SourceAudioError::NotFound
+            } else {
+                SourceAudioError::Unavailable
+            }
+        })?;
+        let manifest: SourceManifest =
+            serde_json::from_slice(&bytes).map_err(|_| SourceAudioError::Invalid)?;
+        self.manifests
+            .write()
+            .map_err(|_| SourceAudioError::Unavailable)?
+            .insert(source_id.clone(), manifest.clone());
+        Ok(manifest)
+    }
+
+    fn persist_manifest(
+        &self,
+        source_id: &SourceAudioId,
+        manifest: &SourceManifest,
+    ) -> Result<(), SourceAudioError> {
+        let destination = self.manifest_path(source_id);
+        let temporary = destination.with_extension(format!("json.tmp-{}", uuid::Uuid::new_v4()));
+        let bytes = serde_json::to_vec(manifest).map_err(|_| SourceAudioError::Unavailable)?;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(|_| SourceAudioError::Unavailable)?;
+        use std::io::Write;
+        let result = (|| {
+            file.write_all(&bytes)
+                .map_err(|_| SourceAudioError::Unavailable)?;
+            file.sync_all().map_err(|_| SourceAudioError::Unavailable)?;
+            fs::rename(&temporary, &destination).map_err(|_| SourceAudioError::Unavailable)?;
+            fs::File::open(&self.manifest_root)
+                .and_then(|directory| directory.sync_all())
+                .map_err(|_| SourceAudioError::Unavailable)
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(temporary);
+        }
+        result
     }
 
     fn resolve_contained(&self, relative: &Path) -> Result<PathBuf, SourceAudioError> {
@@ -157,6 +216,8 @@ mod tests {
             .register_fixture(id.clone(), PathBuf::from("fixture.m4a"), "audio/mp4", 1_000)
             .unwrap();
         assert!(store.inspect(&id).await.is_ok());
+        let reopened = PrivateSourceAudioStore::new(root.path().to_path_buf()).unwrap();
+        assert!(reopened.inspect(&id).await.is_ok());
         fs::write(root.path().join("fixture.m4a"), b"changed").unwrap();
         assert_eq!(
             store.inspect(&id).await.unwrap_err(),

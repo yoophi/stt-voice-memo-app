@@ -205,6 +205,10 @@ pub struct TranscriptionPortError {
 
 #[async_trait]
 pub trait TranscriptionPort: Send + Sync {
+    fn cancel_local(&self, _operation_id: &TranscriptionOperationId) -> bool {
+        false
+    }
+
     async fn create(
         &self,
         request: CreateTranscriptionRequest,

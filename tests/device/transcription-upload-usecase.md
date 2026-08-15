@@ -87,9 +87,9 @@ not persist it or commit it as fixture data.
 | Check                                            | Status  | Evidence / notes                                 |
 | ------------------------------------------------ | ------- | ------------------------------------------------ |
 | Issue #5 artifact/architecture contract          | Pass    | Vitest: 6/6                                      |
-| Backend API and journey contract regressions     | Pass    | Focused Vitest: 35/35                            |
-| Transcription core state/use-case/recovery tests | Pass    | Core: 14/14; workspace suite passed              |
-| HTTP multipart/status/delete contract tests      | Pass    | Loopback adapter: 5/5                            |
+| Backend API and journey contract regressions     | Pass    | Full Vitest: 43/43                               |
+| Transcription core state/use-case/recovery tests | Pass    | Core: 17/17; workspace suite passed              |
+| HTTP multipart/status/delete contract tests      | Pass    | Loopback target: 10/10                           |
 | Content-safety canary tests                      | Pass    | DTO, event, error, and persisted-record checks   |
 | TypeScript build, lint, and formatting           | Pass    | `tsc`, ESLint, targeted Prettier                 |
 | Rust formatting, workspace tests, and clippy     | Pass    | Strict project checks passed                     |

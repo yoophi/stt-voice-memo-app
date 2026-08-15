@@ -151,9 +151,9 @@ them in operation records was rejected. Token refresh UI remains outside Issue
 ## Decision 10: Separate trusted source access from recorder integration
 
 **Decision**: Define `SourceAudioPort` by opaque source ID and return a validated
-descriptor plus an adapter-private stream locator. Implement app-private source
-manifest/file validation and deterministic fixture registration, but defer
-binding recorder results to that manifest to Issue #6.
+descriptor plus an adapter-private stream locator. Persist the app-private source
+manifest atomically so the same opaque ID survives relaunch, revalidate the file
+on every attempt, and defer binding recorder results to that manifest to Issue #6.
 
 **Rationale**: The current public recorder descriptor intentionally hides its
 native URI, and the native artifact ID alone cannot reopen the file after

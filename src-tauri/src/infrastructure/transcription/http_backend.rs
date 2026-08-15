@@ -18,7 +18,9 @@ use std::{
 use futures_util::{StreamExt, TryStreamExt};
 use reqwest::{
     Client, Response, StatusCode, Url,
-    header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue, RETRY_AFTER},
+    header::{
+        AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, HeaderMap, HeaderValue, LOCATION, RETRY_AFTER,
+    },
     multipart::{Form, Part},
 };
 use serde::Deserialize;
@@ -131,6 +133,10 @@ impl CoreHttpTranscriptionPort {
 
 #[async_trait::async_trait]
 impl TranscriptionPort for CoreHttpTranscriptionPort {
+    fn cancel_local(&self, operation_id: &transcription_core::TranscriptionOperationId) -> bool {
+        self.backend.cancel_local(&operation_id.to_string())
+    }
+
     async fn create(
         &self,
         request: CoreCreateRequest,
@@ -436,6 +442,20 @@ async fn parse_operation_response(
     let status = response.status();
     let request_id = ensure_request_id(response.headers())?.to_owned();
     let retry_after_seconds = parse_retry_after(response.headers());
+    let location = response
+        .headers()
+        .get(LOCATION)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    let no_store = response
+        .headers()
+        .get(CACHE_CONTROL)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| {
+            value
+                .split(',')
+                .any(|directive| directive.trim().eq_ignore_ascii_case("no-store"))
+        });
     let expected_content_type = if allowed.contains(&status) {
         "application/json"
     } else {
@@ -451,7 +471,7 @@ async fn parse_operation_response(
                 .next()
                 .is_some_and(|media_type| media_type.trim() == expected_content_type)
         });
-    if !content_type_valid {
+    if !content_type_valid || (allowed.contains(&status) && !no_store) {
         return Err(HttpBackendError::MalformedResponse {
             request_id: Some(request_id),
         });
@@ -474,6 +494,24 @@ async fn parse_operation_response(
             request_id: Some(request_id.clone()),
         })?;
     if operation.request_id != request_id {
+        return Err(HttpBackendError::MalformedResponse {
+            request_id: Some(request_id),
+        });
+    }
+    let expected_location = format!("/v1/transcriptions/{}", operation.id);
+    if status == StatusCode::ACCEPTED
+        && (retry_after_seconds.is_none()
+            || location.as_deref() != Some(expected_location.as_str()))
+    {
+        return Err(HttpBackendError::MalformedResponse {
+            request_id: Some(request_id),
+        });
+    }
+    if matches!(
+        operation.state,
+        OperationState::Queued | OperationState::Processing
+    ) && retry_after_seconds.is_none()
+    {
         return Err(HttpBackendError::MalformedResponse {
             request_id: Some(request_id),
         });
@@ -801,14 +839,18 @@ impl TryFrom<WireOperation> for BackendOperation {
         if cleanup_requires_deadline != wire.cleanup.delete_by.is_some() {
             return Err(());
         }
-        if matches!(
+        let terminal_or_deleting = matches!(
             wire.state,
             OperationState::Completed
                 | OperationState::Failed
                 | OperationState::Cancelled
                 | OperationState::Deleting
                 | OperationState::Deleted
-        ) && wire.cleanup.delete_by.is_none()
+        );
+        if (terminal_or_deleting
+            && wire.cleanup.content_available
+            && wire.cleanup.delete_by.is_none())
+            || (!wire.cleanup.content_available && wire.cleanup.state != CleanupState::Completed)
         {
             return Err(());
         }
@@ -1053,13 +1095,63 @@ fn map_operation(
         },
         result,
         failure,
-        cleanup: match operation.cleanup.state {
-            CleanupState::NotScheduled => CleanupDisposition::NotScheduled,
-            CleanupState::Scheduled => CleanupDisposition::Scheduled { delete_by_ms: 0 },
-            CleanupState::InProgress => CleanupDisposition::InProgress { delete_by_ms: 0 },
-            CleanupState::Completed => CleanupDisposition::Completed,
-            CleanupState::FailedRetrying => CleanupDisposition::FailedRetrying { delete_by_ms: 0 },
-        },
+        cleanup: map_cleanup(&operation.cleanup).map_err(|_| {
+            HttpBackendError::MalformedResponse {
+                request_id: Some(operation.request_id.clone()),
+            }
+        })?,
         request_id: Some(request_id),
     })
+}
+
+fn map_cleanup(cleanup: &CleanupStatus) -> Result<CleanupDisposition, ()> {
+    if !cleanup.content_available {
+        return Ok(CleanupDisposition::Completed);
+    }
+    let delete_by_ms = || {
+        let value = cleanup.delete_by.as_deref().ok_or(())?;
+        let timestamp =
+            time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339)
+                .map_err(|_| ())?;
+        u64::try_from(timestamp.unix_timestamp_nanos() / 1_000_000).map_err(|_| ())
+    };
+    match cleanup.state {
+        CleanupState::NotScheduled => Ok(CleanupDisposition::NotScheduled),
+        CleanupState::Scheduled => Ok(CleanupDisposition::Scheduled {
+            delete_by_ms: delete_by_ms()?,
+        }),
+        CleanupState::InProgress => Ok(CleanupDisposition::InProgress {
+            delete_by_ms: delete_by_ms()?,
+        }),
+        CleanupState::Completed => Err(()),
+        CleanupState::FailedRetrying => Ok(CleanupDisposition::FailedRetrying {
+            delete_by_ms: delete_by_ms()?,
+        }),
+    }
+}
+
+#[cfg(test)]
+mod cleanup_mapping_tests {
+    use super::*;
+
+    #[test]
+    fn cleanup_preserves_deadline_and_content_availability() {
+        let scheduled = CleanupStatus {
+            state: CleanupState::Scheduled,
+            content_available: true,
+            delete_by: Some("2026-08-16T00:00:00Z".into()),
+        };
+        assert_eq!(
+            map_cleanup(&scheduled).unwrap(),
+            CleanupDisposition::Scheduled {
+                delete_by_ms: 1_786_838_400_000
+            }
+        );
+        let removed = CleanupStatus {
+            state: CleanupState::Completed,
+            content_available: false,
+            delete_by: None,
+        };
+        assert_eq!(map_cleanup(&removed), Ok(CleanupDisposition::Completed));
+    }
 }

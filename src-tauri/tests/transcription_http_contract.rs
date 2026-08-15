@@ -26,7 +26,11 @@ async fn create_streams_exact_headers_and_multipart_contract() {
     let response_body = operation_json("queued", None);
     let (url, request) = spawn_server(
         "202 Accepted",
-        &[("X-Request-Id", "request-create"), ("Retry-After", "2")],
+        &[
+            ("X-Request-Id", "request-create"),
+            ("Retry-After", "2"),
+            ("Location", "/v1/transcriptions/backend-operation"),
+        ],
         response_body.as_bytes(),
         Duration::ZERO,
     );
@@ -231,6 +235,58 @@ async fn timeout_and_malformed_response_are_content_safe() {
     assert!(!format!("{error:?} {error}").contains("leak-canary"));
 }
 
+#[tokio::test]
+async fn accepted_and_content_responses_require_contract_headers() {
+    let body = operation_json("queued", None);
+    let (url, request) = spawn_server(
+        "202 Accepted",
+        &[("X-Request-Id", "request-create"), ("Retry-After", "2")],
+        body.as_bytes(),
+        Duration::ZERO,
+    );
+    let fixture = fixture();
+    let error = backend(url, Duration::from_secs(2))
+        .create(CreateUpload {
+            operation_id: OPERATION_ID.to_owned(),
+            source_audio_id: "source-fixture".to_owned(),
+            audio_path: fixture.path().to_owned(),
+            file_name: "recording.m4a".to_owned(),
+            media_type: "audio/mp4".to_owned(),
+            byte_length: AUDIO.len() as u64,
+            sha256: SHA256.to_owned(),
+            language_hint: None,
+            access_token: AccessToken::new("test-user-token").unwrap(),
+            progress: Arc::new(|_| {}),
+        })
+        .await
+        .unwrap_err();
+    request.join().unwrap();
+    assert!(matches!(error, HttpBackendError::MalformedResponse { .. }));
+
+    let completed = operation_json(
+        "completed",
+        Some(r#", "result":{"text":"safe","language":null}"#),
+    );
+    let (url, request) = spawn_server(
+        "200 OK",
+        &[
+            ("X-Request-Id", "request-get"),
+            ("Test-Omit-Cache-Control", "true"),
+        ],
+        completed.as_bytes(),
+        Duration::ZERO,
+    );
+    let error = backend(url, Duration::from_secs(2))
+        .get(
+            "backend-operation",
+            &AccessToken::new("test-user-token").unwrap(),
+        )
+        .await
+        .unwrap_err();
+    request.join().unwrap();
+    assert!(matches!(error, HttpBackendError::MalformedResponse { .. }));
+}
+
 fn backend(base_url: Url, request_timeout: Duration) -> HttpTranscriptionBackend {
     HttpTranscriptionBackend::new(HttpBackendConfig {
         base_url,
@@ -325,11 +381,22 @@ fn spawn_server(
         } else {
             "application/json"
         };
+        let omit_cache = headers
+            .iter()
+            .any(|(name, _)| *name == "Test-Omit-Cache-Control");
+        let cache_header = if omit_cache {
+            ""
+        } else {
+            "Cache-Control: no-store\r\n"
+        };
         let mut response = format!(
-            "HTTP/1.1 {status}\r\nContent-Length: {}\r\nContent-Type: {content_type}\r\nCache-Control: no-store\r\nConnection: close\r\n",
+            "HTTP/1.1 {status}\r\nContent-Length: {}\r\nContent-Type: {content_type}\r\n{cache_header}Connection: close\r\n",
             response_body.len(),
         );
         for (name, value) in headers {
+            if name == "Test-Omit-Cache-Control" {
+                continue;
+            }
             response.push_str(&format!("{name}: {value}\r\n"));
         }
         response.push_str("\r\n");

@@ -56,7 +56,7 @@ Expected outcomes:
 | Lost create response             | `uncertain`; exact replay with same key/fingerprint resolves existing operation    |
 | Known backend ID timeout         | GET status before any create replay                                                |
 | Retryable 429/503                | Safe retry time honored; same identity and bounded attempt                         |
-| 401/auth expiry                  | User-actionable failure; no automatic retry or token persistence                   |
+| 401/auth expiry                  | `waitingForAuthorization`; explicit retry resumes after token refresh              |
 | Cancel before upload             | Local cancelled winner; zero HTTP requests                                         |
 | Cancel during upload             | Local token stops transfer; DELETE/reconciliation decides remote outcome           |
 | Cancel versus completion         | First durable terminal winner is immutable in every ordering                       |
@@ -110,10 +110,10 @@ recorder-to-source integration remain separate work.
 ## Implementation evidence (2026-08-15)
 
 - `cargo test --manifest-path src-tauri/Cargo.toml --workspace`: passed; the
-  transcription core contributed 14 state/use-case/recovery tests and the HTTP
-  loopback suite contributed 5 transport contract tests.
-- Focused repository contracts: 35/35 passed, including 6 Issue #5 artifact and
-  architecture checks.
+  transcription core contributed 17 state/use-case/recovery tests and the HTTP
+  loopback target ran 10 transport, persistence, and safety tests.
+- Full Vitest suite: 43/43 passed, including 6 Issue #5 artifact and architecture
+  checks.
 - `cargo fmt --check`, strict workspace clippy, `tsc -b`, ESLint, and targeted
   Prettier checks passed. The patched upstream `swift-rs` dependency still emits
   its two pre-existing warnings outside project code.

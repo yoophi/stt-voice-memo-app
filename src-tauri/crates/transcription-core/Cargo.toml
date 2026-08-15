@@ -7,6 +7,7 @@ rust-version = "1.85"
 
 [dependencies]
 async-trait = "0.1"
+futures = "0.3"
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
 thiserror = "2"
