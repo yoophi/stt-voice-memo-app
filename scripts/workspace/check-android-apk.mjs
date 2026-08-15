@@ -6,6 +6,7 @@ import { parseArgs, promisify } from "node:util";
 
 import { XMLParser } from "fast-xml-parser";
 
+import { backendConfigurationNames, scanContentSafeFiles } from "./content-safe-scanner.mjs";
 import { collectFiles, repositoryRoot } from "./repository-files.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -281,30 +282,8 @@ function validateReceiver(application) {
   );
 }
 
-function backendNames(contents) {
-  return contents
-    .split(/\r?\n/u)
-    .map((line) => /^([A-Z][A-Z0-9_]*)=/u.exec(line.trim())?.[1])
-    .filter(Boolean);
-}
-
-function encodedValues(value) {
-  const bytes = Buffer.from(value, "utf8");
-  const unicodeEscaped = [...value]
-    .map((character) => `\\u${character.codePointAt(0).toString(16).padStart(4, "0")}`)
-    .join("");
-  return [
-    value,
-    bytes.toString("base64"),
-    bytes.toString("base64url"),
-    bytes.toString("hex"),
-    encodeURIComponent(value),
-    unicodeEscaped,
-  ];
-}
-
 async function scanPayload() {
-  if (!apk && !payloadDir) return;
+  if (!apk && !payloadDir) fail("ANDROID_APK_PAYLOAD_REQUIRED");
   let extractedDirectory;
   let scanDirectory = payloadDir && resolve(payloadDir);
   try {
@@ -317,22 +296,15 @@ async function scanPayload() {
       }
       scanDirectory = extractedDirectory;
     }
-    const names = backendNames(await readFile(absolutePath(template), "utf8"));
-    const forbidden = [...names, ...canary.flatMap(encodedValues)].map((value) =>
-      Buffer.from(value, "utf8"),
-    );
-    const files = await collectFiles([scanDirectory]);
+    const names = backendConfigurationNames(await readFile(absolutePath(template), "utf8"));
+    const files = await collectFiles([scanDirectory], { ignoredDirectories: new Set() });
     if (files.length === 0) fail("ANDROID_APK_PAYLOAD_UNAVAILABLE");
-    for (const path of files) {
-      const contents = await readFile(path);
-      const text = contents.toString("utf8");
-      const minified = text.replace(/["'`+\s]/gu, "");
-      if (
-        forbidden.some((value) => contents.includes(value)) ||
-        canary.some((value) => minified.includes(value.replace(/\s/gu, "")))
-      ) {
-        fail("ANDROID_APK_SECRET_BOUNDARY_INVALID");
-      }
+    const { canaryFindings, nameFindings } = await scanContentSafeFiles(files, {
+      canaries: canary,
+      names,
+    });
+    if (nameFindings > 0 || canaryFindings > 0) {
+      fail("ANDROID_APK_SECRET_BOUNDARY_INVALID");
     }
   } finally {
     if (extractedDirectory) await rm(extractedDirectory, { force: true, recursive: true });

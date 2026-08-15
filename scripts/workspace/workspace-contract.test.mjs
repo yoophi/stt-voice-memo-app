@@ -214,6 +214,15 @@ describe("workspace foundation", () => {
       await writeFile(manifestPath, manifest, "utf8");
       await writeFile(resolve(payloadDirectory, "safe.bin"), "foundation-shell", "utf8");
 
+      const missingPayload = await runNode("scripts/workspace/check-android-apk.mjs", [
+        "--manifest",
+        manifestPath,
+        "--variant",
+        "debug",
+      ]);
+      expect(missingPayload.exitCode).toBe(1);
+      expect(missingPayload.stderr).toContain("ANDROID_APK_PAYLOAD_REQUIRED");
+
       const accepted = await runNode("scripts/workspace/check-android-apk.mjs", [
         "--manifest",
         manifestPath,
@@ -295,7 +304,8 @@ describe("workspace foundation", () => {
 
       await writeFile(manifestPath, manifest, "utf8");
       const canary = "stt-apk-payload-canary-never-secret";
-      await writeFile(resolve(payloadDirectory, "native.so"), canary, "utf8");
+      await mkdir(resolve(payloadDirectory, "node_modules"));
+      await writeFile(resolve(payloadDirectory, "node_modules/native.so"), canary, "utf8");
       const leaked = await runNode("scripts/workspace/check-android-apk.mjs", [
         "--manifest",
         manifestPath,
