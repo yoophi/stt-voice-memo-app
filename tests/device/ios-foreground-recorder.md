@@ -6,7 +6,7 @@
 
 - Device model: Unavailable (only an iPhone 17 Pro simulator was connected)
 - iOS version: Unavailable
-- Build commit: `a5a8a45`
+- Build commit: `a0a679f`
 - Date: 2026-08-15
 - Tester: Codex automated validation; physical tester pending
 
