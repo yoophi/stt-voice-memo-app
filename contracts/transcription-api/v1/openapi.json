@@ -1038,6 +1038,21 @@
             "else": {
               "not": { "required": ["failure"] }
             }
+          },
+          {
+            "if": {
+              "properties": {
+                "state": {
+                  "enum": ["completed", "failed", "cancelled", "deleting", "deleted"]
+                }
+              },
+              "required": ["state"]
+            },
+            "then": {
+              "properties": {
+                "cleanup": { "required": ["delete_by"] }
+              }
+            }
           }
         ],
         "additionalProperties": false
@@ -1295,7 +1310,11 @@
           "state": "deleted",
           "created_at": "2026-08-15T02:00:00Z",
           "updated_at": "2026-08-15T02:00:07Z",
-          "cleanup": { "state": "completed", "content_available": false },
+          "cleanup": {
+            "state": "completed",
+            "content_available": false,
+            "delete_by": "2026-08-16T02:00:07Z"
+          },
           "links": {
             "self": "/v1/transcriptions/trn_01HZY8NQ4F7J9E2K3M5P6R8T0V"
           }

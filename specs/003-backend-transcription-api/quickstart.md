@@ -22,8 +22,9 @@ Expected: the contract parses, all local references resolve, and success,
 recovery, security, privacy, and error-catalog assertions pass. The test-only
 contract double also proves concurrent replay, conflict, authentication,
 ownership, create-rate, active-operation, daily-usage, cancellation/delete
-idempotency, late-result discard, and cleanup-retry behavior without a network
-or provider call.
+idempotency, queued cancellation before dispatch, provider-independent deletion,
+late-result discard, canonical response shapes, terminal replay, and cleanup-retry
+behavior without a network or provider call.
 
 ## Full repository regression
 

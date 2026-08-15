@@ -46,8 +46,8 @@ claims remain downstream conformance evidence.
 
 ## Automated validation
 
-- [x] Focused contract test — 1 file, 19 tests passed
-- [x] Full Vitest suite — 2 files, 21 tests passed
+- [x] Focused contract test — 1 file, 22 tests passed
+- [x] Full Vitest suite — 2 files, 24 tests passed
 - [x] ESLint — passed with no findings
 - [x] Prettier check — all selected files conform
 - [x] Frontend production build — TypeScript and Vite build passed
@@ -82,3 +82,11 @@ claims remain downstream conformance evidence.
       `delete_by` deadline, including cancelled and retry examples.
 - [x] Every HTTP error response references a status-specific RFC 9457 schema whose
       body `status` is constrained to the response status.
+- [x] Completed DELETE releases active capacity and exposes deleting/deleted state
+      without waiting for a delayed provider result.
+- [x] Contract-double operations and problems include every canonical required
+      field, including request identity, timestamps, cleanup, links, and status.
+- [x] Deferred queued work can be cancelled before provider dispatch and yields a
+      canonical `cancelled` state without invoking the provider.
+- [x] Terminal operation states require `cleanup.delete_by`, including completed
+      cleanup, and deleted idempotency replays return terminal HTTP 200.
