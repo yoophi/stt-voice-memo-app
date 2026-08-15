@@ -70,8 +70,11 @@ deterministic, declare the canonical source digest, and join the drift check.
 - Provider credentials, backend signing secrets, user tokens, audio, and
   transcripts never belong in mobile bundles, repository fixtures, or evidence.
 
-Run `pnpm check:client-secrets` after building the client. Tests use synthetic
-canaries only and never read arbitrary developer environment values.
+Run `pnpm verify:client-secret-boundary` to pass a unique synthetic canary
+through an actual temporary Vite build and prove transformed output is rejected,
+then run `pnpm check:client-secrets` against the normal client output. Neither
+command reads arbitrary developer environment values, and the temporary canary
+build is removed after validation.
 
 ## Add a backend domain module
 

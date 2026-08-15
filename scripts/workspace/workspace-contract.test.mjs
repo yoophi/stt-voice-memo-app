@@ -49,16 +49,16 @@ describe("workspace foundation", () => {
     expect(classifyOwnedPath("unexpected/new-root.txt")).toBe("unknown");
   });
 
-  test("keeps the generated Apple project and Android target contract at src-tauri", async () => {
+  test("keeps the Apple project and uninitialized Android host state at src-tauri", async () => {
     await expect(
       access(resolve(repositoryRoot, "src-tauri/gen/apple/stt-voice-memo-app.xcodeproj")),
     ).resolves.toBeUndefined();
     await expect(
-      access(resolve(repositoryRoot, "src-tauri/gen/android/app/build.gradle.kts")),
-    ).resolves.toBeUndefined();
+      access(resolve(repositoryRoot, "src-tauri/gen/android/settings.gradle")),
+    ).rejects.toThrow();
     await expect(
       access(resolve(repositoryRoot, "src-tauri/gen/android/app/src/main/AndroidManifest.xml")),
-    ).resolves.toBeUndefined();
+    ).rejects.toThrow();
 
     const tauriConfig = JSON.parse(await readRepositoryFile("src-tauri/tauri.conf.json"));
     expect(tauriConfig.build.frontendDist).toBe("../dist");
@@ -221,6 +221,20 @@ describe("user story 2: canonical contract and secret boundary", () => {
       expect(result.stderr).toContain("CLIENT_SECRET_CANARY count=3");
       expect(result.stderr).not.toContain(canary);
     });
+  });
+
+  test("wires a unique canary through an actual client build validation", async () => {
+    const packageJson = JSON.parse(await readRepositoryFile("package.json"));
+    const viteConfig = await readRepositoryFile("vite.config.ts");
+    const validator = await readRepositoryFile(
+      "scripts/workspace/verify-client-secret-boundary.mjs",
+    );
+
+    expect(packageJson.scripts["validate:mobile"]).toContain("pnpm verify:client-secret-boundary");
+    expect(packageJson.scripts.validate).toContain("pnpm verify:client-secret-boundary");
+    expect(viteConfig).toContain("STT_SYNTHETIC_CLIENT_CANARY");
+    expect(validator).toContain('"--canary"');
+    expect(validator).toContain("CLIENT_SECRET_BUILD_CANARY_DETECTED");
   });
 });
 

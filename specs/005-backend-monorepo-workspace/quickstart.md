@@ -5,7 +5,7 @@
 - Node.js 22.22 or newer and pnpm 11.0.9 via Corepack
 - Rust stable compatible with repository MSRV 1.85
 - Xcode/Swift for Swift and iOS checks
-- Android SDK and a Java 17 JDK for Android project checks
+- Android SDK and a Java 17 JDK for later Android host initialization
 - Physical iPhone and Android devices plus signing for final device evidence
 
 No backend, OpenAI, storage, queue, auth, or deployment credential is required.
@@ -55,11 +55,13 @@ Build and scan the real client:
 
 ```sh
 pnpm build:mobile
+pnpm verify:client-secret-boundary
 pnpm check:client-secrets
 ```
 
-Automated tests create temporary client output containing synthetic canaries and
-prove the scanner rejects them without printing their values. Never use a real
+The boundary verifier creates a unique synthetic canary, passes it through an
+actual Vite client build, proves the scanner rejects its transformed output
+without printing the value, and removes the temporary build. Never use a real
 environment or credential value for this test.
 
 ## 5. Validate path selection
@@ -95,14 +97,14 @@ the host supports them. Any platform-specific omission is printed separately.
 ```sh
 test -d src-tauri/gen/apple/stt-voice-memo-app.xcodeproj
 pnpm tauri ios build --debug --target aarch64 --no-sign
-JAVA_HOME=$(/usr/libexec/java_home -v 17) \
-  pnpm tauri android build --debug --target aarch64 --apk --ci
+test ! -e src-tauri/gen/android/settings.gradle
+node scripts/workspace/check-mobile-paths.mjs
 ```
 
-The Android host is tracked under `src-tauri/gen/android`; generated APKs,
-native libraries, SDK paths, and signing files remain local build output. On
-non-macOS hosts, set `JAVA_HOME` to the installed Java 17 home using the host's
-equivalent command.
+The Android host remains uninitialized in this feature, matching `origin/main`.
+Initializing it, selecting capabilities, and running the physical Android build
+belongs to a dedicated mobile-host feature. Do not commit locally generated SDK,
+native library, signing, or host files from this workspace migration.
 
 ## 8. Record physical-device evidence
 
