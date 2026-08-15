@@ -46,8 +46,8 @@ claims remain downstream conformance evidence.
 
 ## Automated validation
 
-- [x] Focused contract test — 1 file, 22 tests passed
-- [x] Full Vitest suite — 2 files, 24 tests passed
+- [x] Focused contract test — 1 file, 25 tests passed
+- [x] Full Vitest suite — 2 files, 27 tests passed
 - [x] ESLint — passed with no findings
 - [x] Prettier check — all selected files conform
 - [x] Frontend production build — TypeScript and Vite build passed
@@ -90,3 +90,9 @@ claims remain downstream conformance evidence.
       canonical `cancelled` state without invoking the provider.
 - [x] Terminal operation states require `cleanup.delete_by`, including completed
       cleanup, and deleted idempotency replays return terminal HTTP 200.
+- [x] Processing-state GET returns its current representation immediately without
+      waiting for provider completion.
+- [x] Provider rejection becomes a provider-neutral typed `failed` operation that
+      is visible through GET and same-key terminal replay without leaking raw errors.
+- [x] Create and combined GET/DELETE limits use clock-driven rolling windows,
+      expire after 60 seconds, and include `Retry-After` guidance on rejection.

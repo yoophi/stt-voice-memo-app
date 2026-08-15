@@ -23,8 +23,9 @@ recovery, security, privacy, and error-catalog assertions pass. The test-only
 contract double also proves concurrent replay, conflict, authentication,
 ownership, create-rate, active-operation, daily-usage, cancellation/delete
 idempotency, queued cancellation before dispatch, provider-independent deletion,
-late-result discard, canonical response shapes, terminal replay, and cleanup-retry
-behavior without a network or provider call.
+late-result discard, non-blocking processing reads, typed provider-failure recovery,
+expiring create/combined-management rolling limits, canonical response shapes,
+terminal replay, and cleanup-retry behavior without a network or provider call.
 
 ## Full repository regression
 

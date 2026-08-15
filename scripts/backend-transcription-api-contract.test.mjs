@@ -16,6 +16,7 @@ const createContractHarness = ({
   transcribe = () => ({ text: "Synthetic result" }),
   remove = () => "pending",
   schedule = (task) => task(),
+  now = () => Date.now(),
 } = {}) => {
   const provider = {
     dispatchCount: 0,
@@ -46,6 +47,7 @@ const createContractHarness = ({
       provider,
       policy: contract["x-contract-policy"],
       queue,
+      now,
     }),
   };
 };
@@ -172,7 +174,8 @@ describe("backend transcription API contract", () => {
 
   test("rolling create limit rejects excess work before provider dispatch", async () => {
     const contract = readContract();
-    const { boundary, provider } = createContractHarness({ contract });
+    let nowMs = Date.parse("2026-08-15T00:00:00.000Z");
+    const { boundary, provider } = createContractHarness({ contract, now: () => nowMs });
     const limit = contract["x-contract-policy"].limits.create_per_rolling_minute;
 
     for (let index = 0; index < limit; index += 1) {
@@ -194,9 +197,85 @@ describe("backend transcription API contract", () => {
 
     expect(limited).toMatchObject({
       status: 429,
-      body: { code: "RATE_LIMITED", category: "retryable", retryable: true },
+      headers: { "Retry-After": expect.any(String) },
+      body: {
+        code: "RATE_LIMITED",
+        category: "retryable",
+        retryable: true,
+        retry_after_seconds: expect.any(Number),
+      },
     });
     expect(provider.dispatchCount).toBe(limit);
+
+    nowMs += 60_001;
+    const afterWindow = await boundary.submit({
+      bearerPrincipal: "user-1",
+      idempotencyKey: "idem-key-for-recording-after-window",
+      fingerprint: "sha256:after-window",
+      sourceAudioId: "audio-after-window",
+    });
+
+    expect(afterWindow.status).toBe(202);
+    expect(provider.dispatchCount).toBe(limit + 1);
+  });
+
+  test("processing status reads return immediately without waiting for provider completion", async () => {
+    let finishProvider;
+    const { boundary } = createContractHarness({
+      transcribe: () => new Promise((resolve) => (finishProvider = resolve)),
+    });
+    const accepted = await boundary.submit({
+      bearerPrincipal: "user-1",
+      idempotencyKey: "idem-key-for-immediate-status",
+      fingerprint: "sha256:immediate-status",
+      sourceAudioId: "audio-immediate-status",
+    });
+
+    const status = await Promise.race([
+      boundary.read({
+        bearerPrincipal: "user-1",
+        operationId: accepted.body.id,
+      }),
+      new Promise((resolve) => setTimeout(() => resolve("timed-out"), 20)),
+    ]);
+
+    expect(status).toMatchObject({ status: 200, body: { state: "processing" } });
+    finishProvider({ text: "Synthetic result" });
+  });
+
+  test("provider rejection becomes a typed failed operation visible to reads and replays", async () => {
+    const submission = {
+      bearerPrincipal: "user-1",
+      idempotencyKey: "idem-key-for-provider-failure",
+      fingerprint: "sha256:provider-failure",
+      sourceAudioId: "audio-provider-failure",
+    };
+    const { boundary } = createContractHarness({
+      transcribe: () => Promise.reject(new Error("raw upstream secret")),
+    });
+
+    const accepted = await boundary.submit(submission);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const failed = await boundary.read({
+      bearerPrincipal: submission.bearerPrincipal,
+      operationId: accepted.body.id,
+    });
+    const replay = await boundary.submit(submission);
+
+    expect(failed).toMatchObject({
+      status: 200,
+      body: {
+        state: "failed",
+        failure: {
+          code: "PROVIDER_UNAVAILABLE",
+          category: "retryable",
+          retryable: true,
+        },
+        cleanup: { state: "scheduled", content_available: true },
+      },
+    });
+    expect(replay).toMatchObject({ status: 200, body: { id: accepted.body.id, state: "failed" } });
+    expect(JSON.stringify(failed)).not.toContain("raw upstream secret");
   });
 
   test("unknown and cross-owner reads are indistinguishable", async () => {
@@ -225,6 +304,49 @@ describe("backend transcription API contract", () => {
       status: 404,
       body: { code: "OPERATION_NOT_FOUND", category: "terminal", retryable: false },
     });
+  });
+
+  test("reads and deletes share an expiring management rolling limit", async () => {
+    const contract = readContract();
+    let nowMs = Date.parse("2026-08-15T00:00:00.000Z");
+    const { boundary } = createContractHarness({ contract, now: () => nowMs });
+    const accepted = await boundary.submit({
+      bearerPrincipal: "user-1",
+      idempotencyKey: "idem-key-for-management-limit",
+      fingerprint: "sha256:management-limit",
+      sourceAudioId: "audio-management-limit",
+    });
+    const limit = contract["x-contract-policy"].limits.management_per_rolling_minute;
+
+    for (let index = 0; index < limit; index += 1) {
+      const read = await boundary.read({
+        bearerPrincipal: "user-1",
+        operationId: `unknown-operation-${index}`,
+      });
+      expect(read.status).toBe(404);
+    }
+
+    const limitedDelete = await boundary.delete({
+      bearerPrincipal: "user-1",
+      operationId: accepted.body.id,
+    });
+    expect(limitedDelete).toMatchObject({
+      status: 429,
+      headers: { "Retry-After": expect.any(String) },
+      body: {
+        code: "RATE_LIMITED",
+        category: "retryable",
+        retryable: true,
+        retry_after_seconds: expect.any(Number),
+      },
+    });
+
+    nowMs += 60_001;
+    const afterWindow = await boundary.delete({
+      bearerPrincipal: "user-1",
+      operationId: accepted.body.id,
+    });
+    expect(afterWindow.status).toBe(202);
   });
 
   test("active operation limit rejects excess work before provider dispatch", async () => {
@@ -261,10 +383,12 @@ describe("backend transcription API contract", () => {
 
     const accepted = await Promise.all(active);
     pendingResolvers[0]({ text: "Synthetic result" });
-    await boundary.read({
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const completed = await boundary.read({
       bearerPrincipal: "user-1",
       operationId: accepted[0].body.id,
     });
+    expect(completed.body.state).toBe("completed");
 
     const reopenedSlot = await boundary.submit({
       bearerPrincipal: "user-1",
