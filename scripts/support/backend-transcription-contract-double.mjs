@@ -1,4 +1,4 @@
-export const createTranscriptionContractDouble = ({ provider, policy }) => {
+export const createTranscriptionContractDouble = ({ cleanup, provider, policy }) => {
   const reservations = new Map();
   const operations = new Map();
   const createCounts = new Map();
@@ -86,11 +86,13 @@ export const createTranscriptionContractDouble = ({ provider, policy }) => {
           source_audio_id: submission.sourceAudioId,
           state: "processing",
         },
+        cancelled: false,
         completion: undefined,
       };
       reservation.completion = provider
         .transcribe({ operationId })
         .then((result) => {
+          if (reservation.cancelled) return reservation.current;
           reservation.current = {
             ...reservation.current,
             state: "completed",
@@ -99,7 +101,8 @@ export const createTranscriptionContractDouble = ({ provider, policy }) => {
           return reservation.current;
         })
         .finally(() => {
-          activeCounts.set(submission.bearerPrincipal, activeCount);
+          const currentCount = activeCounts.get(submission.bearerPrincipal) ?? 0;
+          activeCounts.set(submission.bearerPrincipal, Math.max(0, currentCount - 1));
         });
 
       reservations.set(reservationKey, reservation);
@@ -125,6 +128,54 @@ export const createTranscriptionContractDouble = ({ provider, policy }) => {
 
       await stored.reservation.completion;
       return { status: 200, body: stored.reservation.current };
+    },
+    async delete({ bearerPrincipal, operationId }) {
+      const stored = operations.get(operationId);
+      if (!stored || stored.owner !== bearerPrincipal) {
+        return {
+          status: 404,
+          body: {
+            code: "OPERATION_NOT_FOUND",
+            category: "terminal",
+            retryable: false,
+          },
+        };
+      }
+
+      const { reservation } = stored;
+      if (reservation.current.state === "deleted") return { status: 204 };
+
+      reservation.cancelled = true;
+      reservation.current = {
+        ...reservation.current,
+        state: "deleting",
+        cleanup: {
+          state: "in_progress",
+          content_available: false,
+          delete_by: new Date(
+            Date.now() + policy.retention.terminal_content_delete_hours * 60 * 60 * 1_000,
+          ).toISOString(),
+        },
+      };
+      delete reservation.current.result;
+
+      const outcome = await cleanup.remove({ operationId });
+      if (outcome === "completed") {
+        reservation.current = {
+          ...reservation.current,
+          state: "deleted",
+          cleanup: { ...reservation.current.cleanup, state: "completed" },
+        };
+        return { status: 204 };
+      }
+      if (outcome === "failed") {
+        reservation.current = {
+          ...reservation.current,
+          cleanup: { ...reservation.current.cleanup, state: "failed_retrying" },
+        };
+      }
+
+      return { status: 202, body: reservation.current };
     },
   };
 };

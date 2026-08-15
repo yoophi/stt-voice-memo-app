@@ -210,7 +210,7 @@
             },
             "content": {
               "application/problem+json": {
-                "schema": { "$ref": "#/components/schemas/Problem" },
+                "schema": { "$ref": "#/components/schemas/Problem422" },
                 "examples": {
                   "audioDurationExceeded": {
                     "$ref": "#/components/examples/AudioDurationExceeded"
@@ -237,7 +237,7 @@
             },
             "content": {
               "application/problem+json": {
-                "schema": { "$ref": "#/components/schemas/Problem" },
+                "schema": { "$ref": "#/components/schemas/Problem429" },
                 "examples": {
                   "rateLimited": { "$ref": "#/components/examples/RateLimited" },
                   "usageLimitExceeded": {
@@ -432,92 +432,211 @@
     "responses": {
       "MalformedRequest": {
         "description": "The multipart request or required metadata is malformed.",
-        "$ref": "#/components/responses/ProblemResponse"
+        "$ref": "#/components/responses/ProblemResponse400"
       },
       "AuthenticationRequired": {
         "description": "Authentication is missing or invalid.",
-        "$ref": "#/components/responses/ProblemResponse"
+        "$ref": "#/components/responses/ProblemResponse401"
       },
       "FeatureNotAllowed": {
         "description": "The authenticated account cannot use transcription.",
-        "$ref": "#/components/responses/ProblemResponse"
+        "$ref": "#/components/responses/ProblemResponse403"
       },
       "AudioTooLarge": {
         "description": "The audio exceeds the product byte limit.",
-        "$ref": "#/components/responses/ProblemResponse"
+        "$ref": "#/components/responses/ProblemResponse413"
       },
       "UnsupportedAudio": {
         "description": "The audio media type or detected container is unsupported.",
-        "$ref": "#/components/responses/ProblemResponse"
+        "$ref": "#/components/responses/ProblemResponse415"
       },
       "OperationConflict": {
         "description": "The idempotency reservation outcome is uncertain.",
-        "$ref": "#/components/responses/ProblemResponse"
+        "$ref": "#/components/responses/ProblemResponse409"
       },
       "IdempotencyMismatch": {
         "description": "The key was reused for a different request fingerprint.",
-        "$ref": "#/components/responses/ProblemResponse"
+        "$ref": "#/components/responses/ProblemResponse422"
       },
       "RateLimited": {
         "description": "The request may be retried after the stated delay.",
-        "$ref": "#/components/responses/RetryableProblemResponse"
+        "$ref": "#/components/responses/ProblemResponse429"
       },
       "InternalError": {
         "description": "The outcome is uncertain; resolve operation state before retrying.",
-        "$ref": "#/components/responses/ProblemResponse"
+        "$ref": "#/components/responses/ProblemResponse500"
       },
       "ProviderUnavailable": {
         "description": "Transcription is temporarily unavailable.",
-        "$ref": "#/components/responses/RetryableProblemResponse"
+        "$ref": "#/components/responses/ProblemResponse503"
       },
       "ProcessingTimeout": {
         "description": "Processing outcome is uncertain; resolve operation state before retrying.",
-        "$ref": "#/components/responses/ProblemResponse"
+        "$ref": "#/components/responses/ProblemResponse504"
       },
       "OperationNotFound": {
         "description": "The operation is unknown or not owned by the authenticated user.",
-        "$ref": "#/components/responses/ProblemResponse"
+        "$ref": "#/components/responses/ProblemResponse404"
       },
       "ContentExpired": {
         "description": "The known operation representation has expired.",
-        "$ref": "#/components/responses/ProblemResponse"
+        "$ref": "#/components/responses/ProblemResponse410"
       },
-      "ProblemResponse": {
-        "description": "Typed problem detail.",
+      "ProblemResponse400": {
+        "description": "HTTP 400 problem detail.",
         "headers": {
-          "Cache-Control": {
-            "$ref": "#/components/headers/CacheControl"
-          },
-          "X-Request-Id": {
-            "$ref": "#/components/headers/RequestId"
-          }
+          "Cache-Control": { "$ref": "#/components/headers/CacheControl" },
+          "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
         },
         "content": {
           "application/problem+json": {
-            "schema": {
-              "$ref": "#/components/schemas/Problem"
-            }
+            "schema": { "$ref": "#/components/schemas/Problem400" }
           }
         }
       },
-      "RetryableProblemResponse": {
-        "description": "Typed problem detail with a minimum retry delay.",
+      "ProblemResponse401": {
+        "description": "HTTP 401 problem detail.",
         "headers": {
-          "Retry-After": {
-            "$ref": "#/components/headers/RetryAfter"
-          },
-          "Cache-Control": {
-            "$ref": "#/components/headers/CacheControl"
-          },
-          "X-Request-Id": {
-            "$ref": "#/components/headers/RequestId"
-          }
+          "Cache-Control": { "$ref": "#/components/headers/CacheControl" },
+          "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
         },
         "content": {
           "application/problem+json": {
-            "schema": {
-              "$ref": "#/components/schemas/Problem"
-            }
+            "schema": { "$ref": "#/components/schemas/Problem401" }
+          }
+        }
+      },
+      "ProblemResponse403": {
+        "description": "HTTP 403 problem detail.",
+        "headers": {
+          "Cache-Control": { "$ref": "#/components/headers/CacheControl" },
+          "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": { "$ref": "#/components/schemas/Problem403" }
+          }
+        }
+      },
+      "ProblemResponse404": {
+        "description": "HTTP 404 problem detail.",
+        "headers": {
+          "Cache-Control": { "$ref": "#/components/headers/CacheControl" },
+          "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": { "$ref": "#/components/schemas/Problem404" }
+          }
+        }
+      },
+      "ProblemResponse409": {
+        "description": "HTTP 409 problem detail.",
+        "headers": {
+          "Cache-Control": { "$ref": "#/components/headers/CacheControl" },
+          "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": { "$ref": "#/components/schemas/Problem409" }
+          }
+        }
+      },
+      "ProblemResponse410": {
+        "description": "HTTP 410 problem detail.",
+        "headers": {
+          "Cache-Control": { "$ref": "#/components/headers/CacheControl" },
+          "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": { "$ref": "#/components/schemas/Problem410" }
+          }
+        }
+      },
+      "ProblemResponse413": {
+        "description": "HTTP 413 problem detail.",
+        "headers": {
+          "Cache-Control": { "$ref": "#/components/headers/CacheControl" },
+          "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": { "$ref": "#/components/schemas/Problem413" }
+          }
+        }
+      },
+      "ProblemResponse415": {
+        "description": "HTTP 415 problem detail.",
+        "headers": {
+          "Cache-Control": { "$ref": "#/components/headers/CacheControl" },
+          "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": { "$ref": "#/components/schemas/Problem415" }
+          }
+        }
+      },
+      "ProblemResponse422": {
+        "description": "HTTP 422 problem detail.",
+        "headers": {
+          "Cache-Control": { "$ref": "#/components/headers/CacheControl" },
+          "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": { "$ref": "#/components/schemas/Problem422" }
+          }
+        }
+      },
+      "ProblemResponse429": {
+        "description": "HTTP 429 problem detail.",
+        "headers": {
+          "Retry-After": { "$ref": "#/components/headers/RetryAfter" },
+          "Cache-Control": { "$ref": "#/components/headers/CacheControl" },
+          "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": { "$ref": "#/components/schemas/Problem429" }
+          }
+        }
+      },
+      "ProblemResponse500": {
+        "description": "HTTP 500 problem detail.",
+        "headers": {
+          "Cache-Control": { "$ref": "#/components/headers/CacheControl" },
+          "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": { "$ref": "#/components/schemas/Problem500" }
+          }
+        }
+      },
+      "ProblemResponse503": {
+        "description": "HTTP 503 problem detail.",
+        "headers": {
+          "Retry-After": { "$ref": "#/components/headers/RetryAfter" },
+          "Cache-Control": { "$ref": "#/components/headers/CacheControl" },
+          "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": { "$ref": "#/components/schemas/Problem503" }
+          }
+        }
+      },
+      "ProblemResponse504": {
+        "description": "HTTP 504 problem detail.",
+        "headers": {
+          "Cache-Control": { "$ref": "#/components/headers/CacheControl" },
+          "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": { "$ref": "#/components/schemas/Problem504" }
           }
         }
       }
@@ -690,6 +809,84 @@
           { "$ref": "#/components/schemas/FailureTuple" }
         ]
       },
+      "Problem400": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Problem" },
+          { "type": "object", "properties": { "status": { "const": 400 } }, "required": ["status"] }
+        ]
+      },
+      "Problem401": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Problem" },
+          { "type": "object", "properties": { "status": { "const": 401 } }, "required": ["status"] }
+        ]
+      },
+      "Problem403": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Problem" },
+          { "type": "object", "properties": { "status": { "const": 403 } }, "required": ["status"] }
+        ]
+      },
+      "Problem404": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Problem" },
+          { "type": "object", "properties": { "status": { "const": 404 } }, "required": ["status"] }
+        ]
+      },
+      "Problem409": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Problem" },
+          { "type": "object", "properties": { "status": { "const": 409 } }, "required": ["status"] }
+        ]
+      },
+      "Problem410": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Problem" },
+          { "type": "object", "properties": { "status": { "const": 410 } }, "required": ["status"] }
+        ]
+      },
+      "Problem413": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Problem" },
+          { "type": "object", "properties": { "status": { "const": 413 } }, "required": ["status"] }
+        ]
+      },
+      "Problem415": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Problem" },
+          { "type": "object", "properties": { "status": { "const": 415 } }, "required": ["status"] }
+        ]
+      },
+      "Problem422": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Problem" },
+          { "type": "object", "properties": { "status": { "const": 422 } }, "required": ["status"] }
+        ]
+      },
+      "Problem429": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Problem" },
+          { "type": "object", "properties": { "status": { "const": 429 } }, "required": ["status"] }
+        ]
+      },
+      "Problem500": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Problem" },
+          { "type": "object", "properties": { "status": { "const": 500 } }, "required": ["status"] }
+        ]
+      },
+      "Problem503": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Problem" },
+          { "type": "object", "properties": { "status": { "const": 503 } }, "required": ["status"] }
+        ]
+      },
+      "Problem504": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Problem" },
+          { "type": "object", "properties": { "status": { "const": 504 } }, "required": ["status"] }
+        ]
+      },
       "OperationState": {
         "type": "string",
         "enum": ["queued", "processing", "completed", "failed", "cancelled", "deleting", "deleted"]
@@ -739,6 +936,17 @@
             "format": "date-time"
           }
         },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "state": { "enum": ["scheduled", "in_progress", "failed_retrying"] }
+              },
+              "required": ["state"]
+            },
+            "then": { "required": ["delete_by"] }
+          }
+        ],
         "additionalProperties": false
       },
       "OperationLinks": {
@@ -1033,7 +1241,11 @@
           "state": "cancelled",
           "created_at": "2026-08-15T02:00:00Z",
           "updated_at": "2026-08-15T02:00:05Z",
-          "cleanup": { "state": "scheduled", "content_available": false },
+          "cleanup": {
+            "state": "scheduled",
+            "content_available": false,
+            "delete_by": "2026-08-16T02:00:05Z"
+          },
           "links": {
             "self": "/v1/transcriptions/trn_01HZY8NQ4F7J9E2K3M5P6R8T0V"
           }
@@ -1047,7 +1259,11 @@
           "state": "deleting",
           "created_at": "2026-08-15T02:00:00Z",
           "updated_at": "2026-08-15T02:00:06Z",
-          "cleanup": { "state": "in_progress", "content_available": false },
+          "cleanup": {
+            "state": "in_progress",
+            "content_available": false,
+            "delete_by": "2026-08-16T02:00:06Z"
+          },
           "links": {
             "self": "/v1/transcriptions/trn_01HZY8NQ4F7J9E2K3M5P6R8T0V"
           }
@@ -1061,7 +1277,11 @@
           "state": "deleting",
           "created_at": "2026-08-15T02:00:00Z",
           "updated_at": "2026-08-15T02:00:08Z",
-          "cleanup": { "state": "failed_retrying", "content_available": false },
+          "cleanup": {
+            "state": "failed_retrying",
+            "content_available": false,
+            "delete_by": "2026-08-16T02:00:08Z"
+          },
           "links": {
             "self": "/v1/transcriptions/trn_01HZY8NQ4F7J9E2K3M5P6R8T0V"
           }

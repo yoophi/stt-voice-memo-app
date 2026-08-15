@@ -14,6 +14,7 @@ const readContract = () => JSON.parse(readFileSync(contractPath, "utf8"));
 const createContractHarness = ({
   contract = readContract(),
   transcribe = () => ({ text: "Synthetic result" }),
+  remove = () => "pending",
 } = {}) => {
   const provider = {
     dispatchCount: 0,
@@ -22,11 +23,20 @@ const createContractHarness = ({
       return transcribe({ dispatchCount: this.dispatchCount, request });
     },
   };
+  const cleanup = {
+    attemptCount: 0,
+    async remove(request) {
+      this.attemptCount += 1;
+      return remove({ attemptCount: this.attemptCount, request });
+    },
+  };
 
   return {
     contract,
+    cleanup,
     provider,
     boundary: createTranscriptionContractDouble({
+      cleanup,
       provider,
       policy: contract["x-contract-policy"],
     }),
@@ -41,6 +51,12 @@ const resolveLocalReference = (document, reference) => {
     .split("/")
     .map((segment) => segment.replaceAll("~1", "/").replaceAll("~0", "~"))
     .reduce((value, segment) => value?.[segment], document);
+};
+
+const dereference = (document, value) => {
+  let resolved = value;
+  while (resolved?.$ref) resolved = resolveLocalReference(document, resolved.$ref);
+  return resolved;
 };
 
 const collectReferences = (value, references = []) => {
@@ -200,11 +216,8 @@ describe("backend transcription API contract", () => {
     const pendingResolvers = [];
     const { boundary, provider } = createContractHarness({
       contract,
-      transcribe({ dispatchCount }) {
-        if (dispatchCount <= contract["x-contract-policy"].limits.active_operations_per_user) {
-          return new Promise((resolve) => pendingResolvers.push(resolve));
-        }
-        return { text: "Unexpected dispatch" };
+      transcribe() {
+        return new Promise((resolve) => pendingResolvers.push(resolve));
       },
     });
     const activeLimit = contract["x-contract-policy"].limits.active_operations_per_user;
@@ -230,8 +243,98 @@ describe("backend transcription API contract", () => {
     });
     expect(provider.dispatchCount).toBe(activeLimit);
 
-    for (const resolve of pendingResolvers) resolve({ text: "Synthetic result" });
-    await Promise.all(active);
+    const accepted = await Promise.all(active);
+    pendingResolvers[0]({ text: "Synthetic result" });
+    await boundary.read({
+      bearerPrincipal: "user-1",
+      operationId: accepted[0].body.id,
+    });
+
+    const reopenedSlot = await boundary.submit({
+      bearerPrincipal: "user-1",
+      idempotencyKey: "idem-key-for-reopened-slot",
+      fingerprint: "sha256:reopened-slot",
+      sourceAudioId: "audio-reopened-slot",
+    });
+    const stillLimited = await boundary.submit({
+      bearerPrincipal: "user-1",
+      idempotencyKey: "idem-key-for-still-limited",
+      fingerprint: "sha256:still-limited",
+      sourceAudioId: "audio-still-limited",
+    });
+
+    expect(reopenedSlot.status).toBe(202);
+    expect(stillLimited.status).toBe(429);
+    expect(provider.dispatchCount).toBe(activeLimit + 1);
+
+    for (const resolve of pendingResolvers.slice(1)) resolve({ text: "Synthetic result" });
+  });
+
+  test("deleting active work hides and discards a late provider result", async () => {
+    let finishProvider;
+    const { boundary, cleanup } = createContractHarness({
+      transcribe: () => new Promise((resolve) => (finishProvider = resolve)),
+    });
+    const accepted = await boundary.submit({
+      bearerPrincipal: "user-1",
+      idempotencyKey: "idem-key-for-delete-0001",
+      fingerprint: "sha256:delete-0001",
+      sourceAudioId: "audio-delete-1",
+    });
+
+    const deleting = await boundary.delete({
+      bearerPrincipal: "user-1",
+      operationId: accepted.body.id,
+    });
+    finishProvider({ text: "Must be discarded" });
+    const afterLateResult = await boundary.read({
+      bearerPrincipal: "user-1",
+      operationId: accepted.body.id,
+    });
+
+    expect(deleting).toMatchObject({
+      status: 202,
+      body: {
+        state: "deleting",
+        cleanup: { state: "in_progress", content_available: false },
+      },
+    });
+    expect(afterLateResult.body.state).toBe("deleting");
+    expect(afterLateResult.body.result).toBeUndefined();
+    expect(cleanup.attemptCount).toBe(1);
+  });
+
+  test("repeated delete retries cleanup and becomes idempotent after completion", async () => {
+    const { boundary, cleanup } = createContractHarness({
+      remove: ({ attemptCount }) => (attemptCount === 1 ? "failed" : "completed"),
+    });
+    const accepted = await boundary.submit({
+      bearerPrincipal: "user-1",
+      idempotencyKey: "idem-key-for-cleanup-retry",
+      fingerprint: "sha256:cleanup-retry",
+      sourceAudioId: "audio-cleanup-retry",
+    });
+
+    const failedCleanup = await boundary.delete({
+      bearerPrincipal: "user-1",
+      operationId: accepted.body.id,
+    });
+    const completedCleanup = await boundary.delete({
+      bearerPrincipal: "user-1",
+      operationId: accepted.body.id,
+    });
+    const idempotentReplay = await boundary.delete({
+      bearerPrincipal: "user-1",
+      operationId: accepted.body.id,
+    });
+
+    expect(failedCleanup).toMatchObject({
+      status: 202,
+      body: { state: "deleting", cleanup: { state: "failed_retrying" } },
+    });
+    expect(completedCleanup.status).toBe(204);
+    expect(idempotentReplay.status).toBe(204);
+    expect(cleanup.attemptCount).toBe(2);
   });
 
   test("publishes a parseable OpenAPI 3.1.1 artifact with local references", () => {
@@ -364,6 +467,33 @@ describe("backend transcription API contract", () => {
     }
   });
 
+  test("couples every HTTP error response to the same problem status", () => {
+    const contract = readContract();
+
+    for (const path of Object.values(contract.paths)) {
+      for (const operation of [path.post, path.get, path.delete].filter(Boolean)) {
+        for (const [status, declaredResponse] of Object.entries(operation.responses)) {
+          if (Number(status) < 400) continue;
+
+          const response = dereference(contract, declaredResponse);
+          const schemaReference = response.content["application/problem+json"].schema.$ref;
+          expect(schemaReference).toBe(`#/components/schemas/Problem${status}`);
+
+          const statusSchema = resolveLocalReference(contract, schemaReference);
+          expect(statusSchema.allOf).toEqual(
+            expect.arrayContaining([
+              {
+                type: "object",
+                properties: { status: { const: Number(status) } },
+                required: ["status"],
+              },
+            ]),
+          );
+        }
+      }
+    }
+  });
+
   test("defines idempotent cancellation, cleanup, and expiry", () => {
     const contract = readContract();
     const operationPath = contract.paths["/v1/transcriptions/{operationId}"];
@@ -395,8 +525,31 @@ describe("backend transcription API contract", () => {
     }
     expect(contract.components.examples.CleanupRetryingOperation.value).toMatchObject({
       state: "deleting",
-      cleanup: { state: "failed_retrying", content_available: false },
+      cleanup: {
+        state: "failed_retrying",
+        content_available: false,
+        delete_by: "2026-08-16T02:00:08Z",
+      },
     });
+    expect(contract.components.examples.CancelledOperation.value.cleanup.delete_by).toBe(
+      "2026-08-16T02:00:05Z",
+    );
+    expect(contract.components.examples.DeletingOperation.value.cleanup.delete_by).toBe(
+      "2026-08-16T02:00:06Z",
+    );
+    expect(contract.components.schemas.CleanupStatus.allOf).toEqual(
+      expect.arrayContaining([
+        {
+          if: {
+            properties: {
+              state: { enum: ["scheduled", "in_progress", "failed_retrying"] },
+            },
+            required: ["state"],
+          },
+          then: { required: ["delete_by"] },
+        },
+      ]),
+    );
   });
 
   test("enumerates every validation, ownership, and usage error", () => {

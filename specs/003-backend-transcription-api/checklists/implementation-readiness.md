@@ -46,8 +46,8 @@ claims remain downstream conformance evidence.
 
 ## Automated validation
 
-- [x] Focused contract test — 1 file, 16 tests passed
-- [x] Full Vitest suite — 2 files, 18 tests passed
+- [x] Focused contract test — 1 file, 19 tests passed
+- [x] Full Vitest suite — 2 files, 21 tests passed
 - [x] ESLint — passed with no findings
 - [x] Prettier check — all selected files conform
 - [x] Frontend production build — TypeScript and Vite build passed
@@ -74,3 +74,11 @@ claims remain downstream conformance evidence.
       retryable combination for both RFC 9457 problems and operation failures.
 - [x] `failed_retrying` cleanup is represented by a linked DELETE example and a
       lifecycle assertion.
+- [x] Active-operation accounting decrements the current count after completion;
+      a regression test proves only one newly opened slot can be reused.
+- [x] The contract double proves cancellation/delete idempotency, late provider
+      result discard, cleanup failure retry, and completed cleanup behavior.
+- [x] Every scheduled, in-progress, or retrying cleanup requires a 24-hour
+      `delete_by` deadline, including cancelled and retry examples.
+- [x] Every HTTP error response references a status-specific RFC 9457 schema whose
+      body `status` is constrained to the response status.
