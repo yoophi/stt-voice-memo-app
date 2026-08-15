@@ -3,7 +3,9 @@ dist/
 build/
 coverage/
 src-tauri/target/
+target/
 src-tauri/gen/
+scripts/workspace/fixtures/
 pnpm-lock.yaml
 package-lock.json
 yarn.lock

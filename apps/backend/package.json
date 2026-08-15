@@ -1,0 +1,13 @@
+{
+  "name": "@stt-voice-memo/backend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node ../../scripts/workspace/workspace-unavailable.mjs backend dev",
+    "build": "node ../../scripts/workspace/check-boundaries.mjs",
+    "test": "pnpm --dir ../.. test:workspace",
+    "lint": "node ../../scripts/workspace/check-boundaries.mjs",
+    "format": "pnpm --dir ../.. exec prettier --check apps/backend"
+  }
+}

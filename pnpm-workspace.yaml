@@ -1,0 +1,6 @@
+packages:
+  - "apps/*"
+  - "contracts"
+
+failIfNoMatch: true
+disallowWorkspaceCycles: true

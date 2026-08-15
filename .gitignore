@@ -7,6 +7,8 @@ coverage/
 
 # Environment and local secrets
 .env*
+apps/backend/.env*
+!apps/backend/.env.example
 
 # Rust outputs
 target/

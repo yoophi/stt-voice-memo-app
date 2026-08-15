@@ -8,15 +8,6 @@ repository = ""
 edition = "2024"
 rust-version = "1.85"
 
-[workspace]
-members = [
-  ".",
-  "crates/recorder-core",
-  "crates/transcription-core",
-  "plugins/recorder",
-]
-resolver = "2"
-
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
@@ -45,10 +36,3 @@ uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 tempfile = "3"
-
-# swift-rs 1.0.7 passes only `--arch` to SwiftPM. Xcode 27 then selects the
-# macOS SDK before the compiler-level iOS overrides, producing conflicting
-# SDK and target arguments. Keep this patch local until upstream supports
-# SwiftPM's target-level `--triple` option.
-[patch.crates-io]
-swift-rs = { path = "vendor/swift-rs" }

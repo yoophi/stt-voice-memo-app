@@ -32,11 +32,12 @@
 
 ## Current Feature
 
-- Plan: `specs/004-transcription-upload-usecase/plan.md`
-- Specification: `specs/004-transcription-upload-usecase/spec.md`
-- Scope: Issue #5 transcription operation domain/application contracts, trusted
-  source-audio access, backend upload/status/cancel adapter behavior, restart-safe
-  idempotency, and content-safe recovery. Recorder/UI integration remains in #6.
+- Plan: `specs/005-backend-monorepo-workspace/plan.md`
+- Specification: `specs/005-backend-monorepo-workspace/spec.md`
+- Scope: Issue #11 root pnpm/Cargo workspace ownership, canonical transcription
+  contract packaging and drift checks, client/backend secret boundaries, scoped
+  CI validation, contributor documentation, and unchanged Tauri mobile paths.
+  Production backend runtime behavior remains in Issues #12 through #20.
 
 ## References
 
