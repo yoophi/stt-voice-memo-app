@@ -6,6 +6,11 @@
 physical-device gate. Record only synthetic/content-free identifiers. Never add
 credentials, audio, transcript text, private paths, or signing material.
 
+**Scope**: Physical execution is excluded from PR #22 and owned by follow-up
+GitHub Issue [#23](https://github.com/yoophi/stt-voice-memo-app/issues/23). The
+`Not run` rows below are the starting template for that issue, not a completion
+claim in this PR.
+
 ## Tested revision
 
 - Validated implementation commit: `5b57461`
@@ -56,8 +61,9 @@ credentials, audio, transcript text, private paths, or signing material.
 | `pnpm validate`                                                     | `5b57461` | Passed  | Full automated repository validation                                                 |
 | Actual-build secret boundary                                        | `5b57461` | Passed  | Unique canary transformed by Vite, detected without echo, temporary build removed    |
 
-## Completion
+## Follow-up ownership
 
-- [ ] T037 physical iPhone build/install/launch evidence is complete.
-- [ ] T038 physical Android build/install/launch evidence is complete.
-- [ ] No newly requested permission or backend-only configuration was observed.
+- [x] T037 physical iPhone evidence ownership transferred to Issue #23.
+- [x] T038 physical Android evidence ownership transferred to Issue #23.
+- [ ] Issue #23 confirms no newly requested permission or backend-only
+      configuration on physical devices.

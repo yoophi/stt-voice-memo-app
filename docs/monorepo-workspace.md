@@ -105,5 +105,8 @@ for local tests and GitHub Actions. Contract or root/shared changes select all
 consumers; unknown and empty inputs fail safe to full validation. A manual full
 workflow remains available regardless of path selection.
 
-Automated builds do not replace the physical-device evidence in
+Automated builds do not replace physical-device evidence. PR #22 explicitly
+excludes device execution; GitHub Issue
+[#23](https://github.com/yoophi/stt-voice-memo-app/issues/23) owns the physical
+iPhone/Android release gate and updates
 `tests/device/backend-monorepo-workspace.md`.

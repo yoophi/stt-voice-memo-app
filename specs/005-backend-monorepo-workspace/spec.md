@@ -188,9 +188,12 @@ project-path checks on iOS and Android targets.
 - **MLR-003**: Root mobile commands MUST preserve the current foreground app
   launch path for both platforms and MUST document when signing or a physical
   device is required.
-- **MLR-004**: Physical iPhone and Android regression evidence MUST confirm the
-  migrated workspace can locate, build, install, and launch the existing app
-  shell without adding permissions or exposing backend configuration.
+- **MLR-004**: Physical iPhone and Android regression evidence is explicitly
+  deferred to follow-up GitHub Issue
+  [#23](https://github.com/yoophi/stt-voice-memo-app/issues/23). That issue MUST
+  confirm the merged workspace can locate, build, install, and launch the app
+  shell without adding permissions or exposing backend configuration; executing
+  those device trials is outside this implementation PR's scope.
 - **MLR-005**: CI and local checks that do not launch physical devices MUST be
   reported as automated migration evidence, not as substitutes for physical
   mobile acceptance.
@@ -256,9 +259,11 @@ project-path checks on iOS and Android targets.
   platform build group in the four-path selection matrix.
 - **SC-006**: The full root validation path preserves a 100% pass rate for all
   previously passing frontend, Rust, Swift, recorder, and contract checks.
-- **SC-007**: One physical iPhone and one physical Android device build, install,
-  and launch the migrated app shell using the documented root workflow with no
-  newly requested permission and no backend-only configuration in the app.
+- **SC-007 (deferred release gate)**: Follow-up Issue
+  [#23](https://github.com/yoophi/stt-voice-memo-app/issues/23) records one
+  physical iPhone and one physical Android device build, install, and launch of
+  the merged app shell with no newly requested permission and no backend-only
+  configuration. This criterion is not claimed by or included in PR #22.
 - **SC-008**: A clean checkout can reproduce every committed derived artifact
   and yields zero uncommitted drift after generation and validation.
 
@@ -275,7 +280,9 @@ project-path checks on iOS and Android targets.
   Rust toolchain; CI runner and cache-provider selection is an implementation
   planning decision.
 - Physical-device validation requires locally available signing and connected
-  devices and is recorded separately from automated checks.
+  devices. It is excluded from PR #22 and tracked separately by GitHub Issue
+  [#23](https://github.com/yoophi/stt-voice-memo-app/issues/23), without treating
+  automated checks as substitute evidence.
 - Existing recording and transcription behaviors are regression constraints,
   not implementation scope for this feature.
 

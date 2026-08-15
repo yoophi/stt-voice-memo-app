@@ -106,13 +106,16 @@ Initializing it, selecting capabilities, and running the physical Android build
 belongs to a dedicated mobile-host feature. Do not commit locally generated SDK,
 native library, signing, or host files from this workspace migration.
 
-## 8. Record physical-device evidence
+## 8. Follow up physical-device evidence
 
-Use `tests/device/backend-monorepo-workspace.md` to record, for each platform:
+Physical-device execution is excluded from PR #22 and tracked by GitHub Issue
+[#23](https://github.com/yoophi/stt-voice-memo-app/issues/23). When that issue is
+run, use `tests/device/backend-monorepo-workspace.md` to record, for each platform:
 
 1. exact commit, device model, OS version, and root command;
 2. build/install/foreground launch result;
 3. unchanged permission prompts and recorder availability;
 4. absence of backend-only configuration in the installed app/build inspection.
 
-Automated, simulator, and unsigned-build results do not complete this gate.
+Automated, simulator, and unsigned-build results do not complete Issue #23's
+release gate.

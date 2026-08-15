@@ -41,8 +41,9 @@ _GATE: Passed before Phase 0 and re-checked after Phase 1._
 
 - **Mobile first — PASS**: The mobile source, `src-tauri`, generated Apple/Android
   paths, platform targets, permissions, and foreground lifecycle behavior remain
-  unchanged. Automated path/build checks and separate physical-device launch
-  evidence are defined; desktop/background/realtime work is excluded.
+  unchanged. Automated path/build checks are included; physical-device launch
+  evidence is excluded from this implementation PR and owned by follow-up Issue
+  #23. Desktop/background/realtime work is excluded.
 - **Hexagonal Rust — PASS**: The root Cargo workspace only changes ownership and
   build orchestration. Existing pure crates stay isolated, and the reserved
   backend map explicitly separates domain/application, ports, inbound, and
@@ -56,13 +57,15 @@ _GATE: Passed before Phase 0 and re-checked after Phase 1._
   feature handles no audio or transcript content.
 - **Resilient voice flow — PASS**: Existing recorder/transcription tests remain
   in the full validation path. No state transition changes; physical iOS/Android
-  launch regression is a documented completion gate.
+  launch regression remains a documented release gate owned by Issue #23 rather
+  than this workspace implementation PR.
 
 ### Post-Design Re-check
 
 All five gates remain satisfied. The contracts define explicit ownership rather
-than a shared business-logic module, and the physical-device evidence is not
-conflated with automated CI. No constitutional exception is required.
+than a shared business-logic module, and the physical-device evidence is neither
+conflated with automated CI nor claimed by this PR. Follow-up Issue #23 owns that
+release gate. No constitutional exception is required.
 
 ## Project Structure
 

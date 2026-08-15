@@ -6,8 +6,8 @@
 
 **Tests**: Workspace, dependency, contract drift, path selection, secret boundary,
 and mobile-path preservation are security or architecture contracts and MUST be
-implemented test-first. Physical iOS and Android migration evidence remains a
-separate completion gate.
+implemented test-first. Physical iOS and Android migration evidence is excluded
+from PR #22 and owned by follow-up GitHub Issue #23 as a separate release gate.
 
 **Organization**: Tasks are grouped by user story and ordered for sequential
 execution. `[P]` marks tasks that use different files and have no dependency on
@@ -125,8 +125,8 @@ project paths remain discoverable.
 - [x] T034 [P] Update `.gitignore`, `.prettierignore`, and `eslint.config.js` for root Cargo output, backend local environments, deterministic fixtures, and generated native output
 - [x] T035 [P] Update root onboarding and scoped/full validation links in `README.md` and current feature context in `AGENTS.md`
 - [x] T036 Run contract, backend, mobile, frontend, Rust, Clippy, Swift, formatting, lint, build, drift, and secret checks from `specs/005-backend-monorepo-workspace/quickstart.md`
-- [ ] T037 Run the physical iPhone build/install/launch regression and record real evidence in `tests/device/backend-monorepo-workspace.md`
-- [ ] T038 Run the physical Android build/install/launch regression and record real evidence in `tests/device/backend-monorepo-workspace.md`
+- [x] T037 Transfer the physical iPhone build/install/launch regression and evidence ownership to GitHub Issue #23
+- [x] T038 Transfer the physical Android build/install/launch regression and evidence ownership to GitHub Issue #23
 - [x] T039 Review every changed file for real secrets, audio/transcript content, generated drift, and unintended mobile path changes, then record the automated results in `tests/device/backend-monorepo-workspace.md`
 
 ---
@@ -142,7 +142,8 @@ project paths remain discoverable.
 - **US2 (Phase 4)**: Depends on US1 package ownership and command facades.
 - **US3 (Phase 5)**: Depends on US1/US2 command names so CI invokes stable scopes.
 - **Polish (Phase 6)**: Depends on all automated implementation stories. T037 and
-  T038 require connected physical devices/signing and cannot be substituted by CI.
+  T038 complete the scope handoff only; Issue #23 requires connected physical
+  devices/signing and cannot be substituted by CI.
 
 ### User Story Dependencies
 
@@ -166,7 +167,8 @@ project paths remain discoverable.
 - T019 and T020 can be written in parallel; T024 is independent after the backend package exists.
 - T027 and T028 are separate test tables in one file and should be edited sequentially by one contributor, but conceptually validate independent rules.
 - T034 and T035 touch separate configuration/documentation files.
-- Physical T037 and T038 can run in parallel on separate equipped hosts after T036.
+- Issue #23's physical iPhone and Android trials can run in parallel on separate
+  equipped hosts after PR #22 is merged.
 
 ## Parallel Example: User Story 2
 
@@ -190,11 +192,13 @@ Task T024: Add the names-only backend environment template after US1 creates the
 1. US1 establishes ownership and commands.
 2. US2 protects contract and secrets.
 3. US3 adds selective CI and mobile migration checks.
-4. Automated full validation completes before physical-device evidence.
+4. Automated full validation completes in PR #22; Issue #23 owns later
+   physical-device evidence against the merged revision.
 
 ## Notes
 
 - Never place a real credential in a fixture, command argument, test log, or evidence file.
 - `dev:backend` intentionally remains unavailable until a later runtime feature.
 - Do not move `src`, `src-tauri`, Apple, or Android generated projects in this issue.
-- Mark T037/T038 complete only with actual physical-device evidence.
+- T037/T038 indicate that ownership was transferred, not that device trials
+  passed. Only close Issue #23 with actual physical-device evidence.
