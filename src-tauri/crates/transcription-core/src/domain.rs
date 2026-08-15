@@ -246,6 +246,10 @@ impl Failure {
         self.request_id = Some(request_id);
         self
     }
+
+    pub fn is_authentication_required(&self) -> bool {
+        self.code == "AUTHENTICATION_REQUIRED" && self.category == FailureCategory::UserActionable
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -362,6 +366,8 @@ pub struct TranscriptionOperation {
     terminal_winner: Option<TerminalWinner>,
     failure: Option<Failure>,
     retry: Option<RetryMetadata>,
+    #[serde(default)]
+    poll_at_ms: Option<u64>,
     cleanup: CleanupDisposition,
     backend_request_id: Option<BackendRequestId>,
     event_sequence: u64,
@@ -389,6 +395,7 @@ impl TranscriptionOperation {
             terminal_winner: None,
             failure: None,
             retry: None,
+            poll_at_ms: None,
             cleanup: CleanupDisposition::NotScheduled,
             backend_request_id: None,
             event_sequence: 0,
@@ -430,6 +437,9 @@ impl TranscriptionOperation {
     pub fn retry(&self) -> Option<&RetryMetadata> {
         self.retry.as_ref()
     }
+    pub fn poll_at_ms(&self) -> Option<u64> {
+        self.poll_at_ms
+    }
     pub fn cleanup(&self) -> &CleanupDisposition {
         &self.cleanup
     }
@@ -470,6 +480,7 @@ impl TranscriptionOperation {
         self.phase = OperationPhase::WaitingForAuthorization;
         self.failure = Some(failure);
         self.retry = None;
+        self.poll_at_ms = None;
         Ok(())
     }
 
@@ -507,6 +518,7 @@ impl TranscriptionOperation {
         self.phase = OperationPhase::Uploading;
         self.failure = None;
         self.retry = None;
+        self.poll_at_ms = None;
         self.progress = None;
         Ok(())
     }
@@ -536,6 +548,7 @@ impl TranscriptionOperation {
         id: BackendOperationId,
         phase: OperationPhase,
         request_id: Option<BackendRequestId>,
+        poll_at_ms: Option<u64>,
     ) -> Result<(), DomainError> {
         self.require_no_terminal()?;
         if !matches!(phase, OperationPhase::Queued | OperationPhase::Processing) {
@@ -545,6 +558,7 @@ impl TranscriptionOperation {
         self.phase = phase;
         self.backend_request_id = request_id;
         self.failure = None;
+        self.poll_at_ms = poll_at_ms;
         Ok(())
     }
 
@@ -555,12 +569,14 @@ impl TranscriptionOperation {
         self.phase = OperationPhase::Completed;
         self.failure = None;
         self.retry = None;
+        self.poll_at_ms = None;
         Ok(())
     }
 
     pub fn fail(&mut self, failure: Failure, now_ms: u64) -> Result<(), DomainError> {
         self.require_no_terminal()?;
         self.backend_request_id = failure.request_id.clone();
+        self.poll_at_ms = None;
         match failure.category {
             FailureCategory::Retryable => {
                 self.phase = OperationPhase::RetryableFailure;
@@ -603,6 +619,7 @@ impl TranscriptionOperation {
         self.phase = OperationPhase::Cancelled;
         self.cleanup = CleanupDisposition::Completed;
         self.failure = None;
+        self.poll_at_ms = None;
         Ok(())
     }
 
@@ -616,6 +633,7 @@ impl TranscriptionOperation {
             OperationPhase::CleanupPending
         };
         self.failure = None;
+        self.poll_at_ms = None;
         Ok(())
     }
 

@@ -161,7 +161,10 @@ impl OperationView {
                 category: failure.category,
                 retryable: failure.retryable,
             }),
-            retry_at_ms: operation.retry().map(|retry| retry.earliest_retry_at_ms),
+            retry_at_ms: operation
+                .retry()
+                .map(|retry| retry.earliest_retry_at_ms)
+                .or(operation.poll_at_ms()),
             cleanup: operation.cleanup().clone(),
             backend_request_id: operation.backend_request_id().map(ToString::to_string),
             transcript: outcome

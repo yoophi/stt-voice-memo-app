@@ -1,3 +1,4 @@
+mod atomic_file;
 pub mod auth_session;
 pub mod http_backend;
 pub mod local_operation_store;

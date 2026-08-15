@@ -121,6 +121,23 @@ async fn get_and_delete_use_exact_resource_path() {
     assert!(deleted.is_none());
     let delete_request = String::from_utf8_lossy(&delete_request.join().unwrap()).to_string();
     assert!(delete_request.starts_with("DELETE /v1/transcriptions/backend-operation HTTP/1.1\r\n"));
+
+    let deleting_body = operation_json("deleting", None);
+    let (delete_url, delete_request) = spawn_server(
+        "202 Accepted",
+        &[("X-Request-Id", "request-deleting"), ("Retry-After", "2")],
+        deleting_body.as_bytes(),
+        Duration::ZERO,
+    );
+    let deleting = backend(delete_url, Duration::from_secs(2))
+        .delete(OPERATION_ID, "backend-operation", &token)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(deleting.state, OperationState::Deleting);
+    assert_eq!(deleting.retry_after_seconds, Some(2));
+    let delete_request = String::from_utf8_lossy(&delete_request.join().unwrap()).to_string();
+    assert!(delete_request.starts_with("DELETE /v1/transcriptions/backend-operation HTTP/1.1\r\n"));
 }
 
 #[tokio::test]
@@ -196,6 +213,31 @@ async fn local_cancellation_drops_an_in_flight_create() {
     assert!(backend.cancel_local(OPERATION_ID));
     assert_eq!(create.await.unwrap(), Err(HttpBackendError::Cancelled));
     request.join().unwrap();
+}
+
+#[tokio::test]
+async fn cancellation_before_transport_registration_prevents_upload_start() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
+    drop(listener);
+    let backend = backend(url, Duration::from_secs(2));
+    assert!(backend.cancel_local(OPERATION_ID));
+    let fixture = fixture();
+    let result = backend
+        .create(CreateUpload {
+            operation_id: OPERATION_ID.to_owned(),
+            source_audio_id: "source-fixture".to_owned(),
+            audio_path: fixture.path().to_owned(),
+            file_name: "recording.m4a".to_owned(),
+            media_type: "audio/mp4".to_owned(),
+            byte_length: AUDIO.len() as u64,
+            sha256: SHA256.to_owned(),
+            language_hint: None,
+            access_token: AccessToken::new("test-user-token").unwrap(),
+            progress: Arc::new(|_| {}),
+        })
+        .await;
+    assert_eq!(result, Err(HttpBackendError::Cancelled));
 }
 
 #[tokio::test]

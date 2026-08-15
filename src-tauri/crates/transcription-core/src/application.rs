@@ -1,14 +1,15 @@
 use std::sync::Arc;
 
+use futures::{FutureExt, StreamExt};
 use thiserror::Error;
 
 use crate::{
     AuthorizationError, AuthorizationPort, BackendOperation, BackendOperationRequest, BackendState,
-    CleanupDisposition, Clock, ConnectivityPort, CreateTranscriptionRequest, DomainError, Failure,
-    FailureCategory, FinalTranscript, OperationEvent, OperationEventSink, OperationPhase,
-    OperationRepository, RepositoryError, SourceAudioError, SourceAudioId, SourceAudioPort,
-    SubmissionFingerprint, TranscriptionOperation, TranscriptionOperationId, TranscriptionOptions,
-    TranscriptionPort, TranscriptionPortError, UploadObservation, UploadProgressSink,
+    Clock, ConnectivityPort, CreateTranscriptionRequest, DomainError, Failure, FailureCategory,
+    FinalTranscript, OperationEvent, OperationEventSink, OperationPhase, OperationRepository,
+    RepositoryError, SourceAudioError, SourceAudioId, SourceAudioPort, SubmissionFingerprint,
+    TranscriptionOperation, TranscriptionOperationId, TranscriptionOptions, TranscriptionPort,
+    TranscriptionPortError, UploadObservation, UploadProgressSink,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -273,14 +274,12 @@ impl TranscriptionService {
                 return Err(ApplicationError::Authorization(error));
             }
         };
-        let (progress_sender, progress_receiver) = std::sync::mpsc::channel();
-        let operations = self.operations.clone();
-        let events = self.events.clone();
-        let progress_task = std::thread::spawn(move || {
-            while let Ok(observation) = progress_receiver.recv() {
-                futures::executor::block_on(persist_progress(&operations, &events, observation));
-            }
-        });
+        let latest = self.operations.load(operation.id()).await?;
+        if latest.cancel_requested() || latest.phase() == OperationPhase::Cancelling {
+            return Ok(OperationOutcome::operation(latest));
+        }
+        operation = latest;
+        let (progress_sender, mut progress_receiver) = futures::channel::mpsc::unbounded();
         let request = CreateTranscriptionRequest {
             operation_id: operation.id().clone(),
             source,
@@ -290,8 +289,21 @@ impl TranscriptionService {
             authorization,
             progress: Arc::new(ProgressRecorder(progress_sender)),
         };
-        let result = self.backend.create(request).await;
-        let _ = progress_task.join();
+        let create = self.backend.create(request).fuse();
+        futures::pin_mut!(create);
+        let result = loop {
+            futures::select! {
+                result = create => break result,
+                observation = progress_receiver.next() => {
+                    if let Some(observation) = observation {
+                        persist_progress(&self.operations, &self.events, observation).await;
+                    }
+                }
+            }
+        };
+        while let Some(observation) = progress_receiver.next().await {
+            persist_progress(&self.operations, &self.events, observation).await;
+        }
         let latest = self.operations.load(operation.id()).await?;
         match result {
             Ok(remote) => self.apply_backend(latest, remote).await,
@@ -339,7 +351,7 @@ impl TranscriptionService {
             operation.mark_cancel_reconciliation_needed(error.failure)?;
             return Ok(OperationOutcome::operation(self.commit(operation).await?));
         }
-        if error.failure.code == "AUTHENTICATION_REQUIRED" {
+        if error.failure.is_authentication_required() {
             operation.mark_waiting_for_authorization(error.failure)?;
             return Ok(OperationOutcome::operation(self.commit(operation).await?));
         }
@@ -370,7 +382,7 @@ impl TranscriptionService {
             };
         }
         if operation.terminal_winner().is_some() {
-            if operation.phase() == OperationPhase::Completed
+            if operation.terminal_winner() == Some(crate::TerminalWinner::Completed)
                 && remote.state == BackendState::Completed
             {
                 let transcript = self.final_transcript_with_ids(&operation, &remote)?;
@@ -392,6 +404,7 @@ impl TranscriptionService {
                 remote.id,
                 OperationPhase::Processing,
                 remote.request_id,
+                None,
             )?;
             operation.begin_cancel()?;
             let operation = self.commit(operation).await?;
@@ -400,19 +413,29 @@ impl TranscriptionService {
 
         let transcript_candidate = match remote.state {
             BackendState::Queued => {
+                let poll_at_ms = remote
+                    .poll_after_ms
+                    .map(|delay| self.clock.now_ms().saturating_add(delay));
                 operation.observe_backend_active(
                     remote.id,
                     OperationPhase::Queued,
                     remote.request_id,
+                    poll_at_ms,
                 )?;
+                operation.set_cleanup(remote.cleanup);
                 None
             }
             BackendState::Processing => {
+                let poll_at_ms = remote
+                    .poll_after_ms
+                    .map(|delay| self.clock.now_ms().saturating_add(delay));
                 operation.observe_backend_active(
                     remote.id,
                     OperationPhase::Processing,
                     remote.request_id,
+                    poll_at_ms,
                 )?;
+                operation.set_cleanup(remote.cleanup);
                 None
             }
             BackendState::Completed => {
@@ -421,6 +444,7 @@ impl TranscriptionService {
                     Err(_) => return self.malformed(operation).await,
                 };
                 operation.complete(Some(remote.id))?;
+                operation.set_cleanup(remote.cleanup);
                 Some(transcript)
             }
             BackendState::Failed => {
@@ -431,29 +455,23 @@ impl TranscriptionService {
                     remote.id,
                     OperationPhase::Processing,
                     remote.request_id,
+                    None,
                 )?;
                 operation.fail(failure, self.clock.now_ms())?;
+                operation.set_cleanup(remote.cleanup);
                 None
             }
             BackendState::Cancelled | BackendState::Deleted => {
-                operation.confirm_cancel(CleanupDisposition::Completed)?;
+                operation.confirm_cancel(remote.cleanup)?;
                 None
             }
             BackendState::Deleting => {
-                let cleanup = match remote.cleanup {
-                    CleanupDisposition::NotScheduled | CleanupDisposition::Completed => {
-                        CleanupDisposition::InProgress {
-                            delete_by_ms: self.clock.now_ms(),
-                        }
-                    }
-                    cleanup => cleanup,
-                };
-                operation.confirm_cancel(cleanup)?;
+                operation.confirm_cancel(remote.cleanup)?;
                 None
             }
         };
         let operation = self.commit(operation).await?;
-        let transcript = if operation.phase() == OperationPhase::Completed {
+        let transcript = if operation.terminal_winner() == Some(crate::TerminalWinner::Completed) {
             transcript_candidate
         } else {
             None
@@ -532,17 +550,20 @@ impl TranscriptionService {
             phase: operation.phase(),
             progress_basis_points,
             failure_code: operation.failure().map(|failure| failure.code.clone()),
-            retry_at_ms: operation.retry().map(|retry| retry.earliest_retry_at_ms),
+            retry_at_ms: operation
+                .retry()
+                .map(|retry| retry.earliest_retry_at_ms)
+                .or(operation.poll_at_ms()),
             cleanup: operation.cleanup().clone(),
         }
     }
 }
 
-struct ProgressRecorder(std::sync::mpsc::Sender<UploadObservation>);
+struct ProgressRecorder(futures::channel::mpsc::UnboundedSender<UploadObservation>);
 
 impl UploadProgressSink for ProgressRecorder {
     fn observe(&self, observation: UploadObservation) {
-        let _ = self.0.send(observation);
+        let _ = self.0.unbounded_send(observation);
     }
 }
 

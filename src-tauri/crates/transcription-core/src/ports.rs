@@ -160,6 +160,7 @@ pub struct BackendOperation {
     pub failure: Option<Failure>,
     pub cleanup: CleanupDisposition,
     pub request_id: Option<BackendRequestId>,
+    pub poll_after_ms: Option<u64>,
 }
 
 impl BackendOperation {
@@ -176,6 +177,7 @@ impl BackendOperation {
             failure: None,
             cleanup: CleanupDisposition::NotScheduled,
             request_id: None,
+            poll_after_ms: None,
         }
     }
 }

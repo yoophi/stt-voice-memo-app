@@ -5,7 +5,7 @@
 //! bearer credentials, and provider response shapes never leak into the core.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt,
     path::PathBuf,
     sync::{
@@ -114,7 +114,7 @@ pub struct HttpTranscriptionBackend {
     client: Client,
     base_url: Url,
     request_timeout: Duration,
-    active: Arc<Mutex<HashMap<String, ActiveRequest>>>,
+    cancellations: Arc<Mutex<CancellationRegistry>>,
     next_generation: Arc<AtomicU64>,
 }
 
@@ -222,6 +222,7 @@ impl TranscriptionPort for CoreHttpTranscriptionPort {
                 failure: None,
                 cleanup: CleanupDisposition::Completed,
                 request_id: None,
+                poll_after_ms: None,
             }),
         }
     }
@@ -231,6 +232,12 @@ impl TranscriptionPort for CoreHttpTranscriptionPort {
 struct ActiveRequest {
     generation: u64,
     token: CancellationToken,
+}
+
+#[derive(Default)]
+struct CancellationRegistry {
+    active: HashMap<String, ActiveRequest>,
+    pending: HashSet<String>,
 }
 
 impl HttpTranscriptionBackend {
@@ -247,7 +254,7 @@ impl HttpTranscriptionBackend {
             client,
             base_url: config.base_url,
             request_timeout: config.request_timeout,
-            active: Arc::new(Mutex::new(HashMap::new())),
+            cancellations: Arc::new(Mutex::new(CancellationRegistry::default())),
             next_generation: Arc::new(AtomicU64::new(1)),
         })
     }
@@ -305,7 +312,12 @@ impl HttpTranscriptionBackend {
             .await
             .ok_or(HttpBackendError::Cancelled)?
             .map_err(map_reqwest_error)?;
-        parse_operation_response(response, &[StatusCode::OK, StatusCode::ACCEPTED]).await
+        parse_operation_response(
+            response,
+            &[StatusCode::OK, StatusCode::ACCEPTED],
+            ResponseContract::Create,
+        )
+        .await
     }
 
     pub async fn get(
@@ -322,7 +334,7 @@ impl HttpTranscriptionBackend {
             .send()
             .await
             .map_err(map_reqwest_error)?;
-        parse_operation_response(response, &[StatusCode::OK]).await
+        parse_operation_response(response, &[StatusCode::OK], ResponseContract::Resource).await
     }
 
     pub async fn delete(
@@ -346,23 +358,30 @@ impl HttpTranscriptionBackend {
             ensure_request_id(response.headers())?;
             return Ok(None);
         }
-        parse_operation_response(response, &[StatusCode::ACCEPTED])
-            .await
-            .map(Some)
+        parse_operation_response(
+            response,
+            &[StatusCode::ACCEPTED],
+            ResponseContract::Resource,
+        )
+        .await
+        .map(Some)
     }
 
     pub fn cancel_local(&self, operation_id: &str) -> bool {
-        let token = self
-            .active
+        let mut registry = self
+            .cancellations
             .lock()
-            .expect("cancellation registry lock poisoned")
+            .expect("cancellation registry lock poisoned");
+        let token = registry
+            .active
             .get(operation_id)
             .map(|active| active.token.clone());
         if let Some(token) = token {
             token.cancel();
             true
         } else {
-            false
+            registry.pending.insert(operation_id.to_owned());
+            true
         }
     }
 
@@ -372,10 +391,15 @@ impl HttpTranscriptionBackend {
             generation: self.next_generation.fetch_add(1, Ordering::Relaxed),
             token: token.clone(),
         };
-        if let Some(previous) = self
-            .active
+        let mut registry = self
+            .cancellations
             .lock()
-            .expect("cancellation registry lock poisoned")
+            .expect("cancellation registry lock poisoned");
+        if registry.pending.remove(operation_id) {
+            token.cancel();
+        }
+        if let Some(previous) = registry
+            .active
             .insert(operation_id.to_owned(), active_request.clone())
         {
             previous.token.cancel();
@@ -384,15 +408,16 @@ impl HttpTranscriptionBackend {
     }
 
     fn unregister(&self, operation_id: &str, generation: u64) {
-        let mut active = self
-            .active
+        let mut registry = self
+            .cancellations
             .lock()
             .expect("cancellation registry lock poisoned");
-        if active
+        if registry
+            .active
             .get(operation_id)
             .is_some_and(|current| current.generation == generation)
         {
-            active.remove(operation_id);
+            registry.active.remove(operation_id);
         }
     }
 
@@ -438,6 +463,7 @@ fn progress_stream(
 async fn parse_operation_response(
     response: Response,
     allowed: &[StatusCode],
+    contract: ResponseContract,
 ) -> Result<BackendOperation, HttpBackendError> {
     let status = response.status();
     let request_id = ensure_request_id(response.headers())?.to_owned();
@@ -501,7 +527,8 @@ async fn parse_operation_response(
     let expected_location = format!("/v1/transcriptions/{}", operation.id);
     if status == StatusCode::ACCEPTED
         && (retry_after_seconds.is_none()
-            || location.as_deref() != Some(expected_location.as_str()))
+            || (contract == ResponseContract::Create
+                && location.as_deref() != Some(expected_location.as_str())))
     {
         return Err(HttpBackendError::MalformedResponse {
             request_id: Some(request_id),
@@ -518,6 +545,12 @@ async fn parse_operation_response(
     }
     operation.retry_after_seconds = retry_after_seconds;
     Ok(operation)
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum ResponseContract {
+    Create,
+    Resource,
 }
 
 async fn read_limited(response: Response) -> Result<Vec<u8>, HttpBackendError> {
@@ -1101,6 +1134,9 @@ fn map_operation(
             }
         })?,
         request_id: Some(request_id),
+        poll_after_ms: operation
+            .retry_after_seconds
+            .map(|seconds| seconds.saturating_mul(1_000)),
     })
 }
 

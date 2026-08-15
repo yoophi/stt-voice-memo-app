@@ -1,7 +1,6 @@
 use std::{
     collections::HashMap,
-    fs::{self, File, OpenOptions},
-    io::Write,
+    fs,
     path::{Path, PathBuf},
     sync::Mutex,
 };
@@ -11,6 +10,8 @@ use transcription_core::{
     GetOrCreateResult, OperationRepository, RepositoryError, TranscriptionOperation,
     TranscriptionOperationId,
 };
+
+use super::atomic_file;
 
 pub struct LocalOperationStore {
     root: PathBuf,
@@ -42,28 +43,9 @@ impl LocalOperationStore {
     }
 
     fn write_atomic(&self, operation: &TranscriptionOperation) -> Result<(), RepositoryError> {
-        fs::create_dir_all(&self.root).map_err(|_| RepositoryError::Unavailable)?;
         let path = self.path(operation.id());
-        let temporary = path.with_extension(format!("json.tmp-{}", uuid::Uuid::new_v4()));
         let bytes = serde_json::to_vec(operation).map_err(|_| RepositoryError::Unavailable)?;
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)
-            .map_err(|_| RepositoryError::Unavailable)?;
-        let result = (|| {
-            file.write_all(&bytes)
-                .map_err(|_| RepositoryError::Unavailable)?;
-            file.sync_all().map_err(|_| RepositoryError::Unavailable)?;
-            fs::rename(&temporary, &path).map_err(|_| RepositoryError::Unavailable)?;
-            File::open(&self.root)
-                .and_then(|directory| directory.sync_all())
-                .map_err(|_| RepositoryError::Unavailable)
-        })();
-        if result.is_err() {
-            let _ = fs::remove_file(&temporary);
-        }
-        result
+        atomic_file::replace(&path, &bytes).map_err(|_| RepositoryError::Unavailable)
     }
 
     fn all(

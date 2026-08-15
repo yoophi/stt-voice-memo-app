@@ -156,11 +156,13 @@ impl TranscriptionPort for Backend {
             )
             .unwrap(),
         );
-        Ok(BackendOperation::active(
+        let mut operation = BackendOperation::active(
             BackendOperationId::parse("backend-1").unwrap(),
             request.source.id,
             *self.state.lock().unwrap(),
-        ))
+        );
+        operation.poll_after_ms = Some(2_000);
+        Ok(operation)
     }
     async fn get(
         &self,
@@ -175,6 +177,9 @@ impl TranscriptionPort for Backend {
         );
         if state == BackendState::Completed {
             operation.result = Some(BackendTranscript::new(" final text ", Some("ko".into())));
+            operation.cleanup = CleanupDisposition::Scheduled {
+                delete_by_ms: 86_400_000,
+            };
         }
         Ok(operation)
     }
@@ -223,11 +228,18 @@ fn submit_deduplicates_then_status_returns_one_nonblank_final_result() {
             .unwrap();
         assert_eq!(first.operation.id(), duplicate.operation.id());
         assert_eq!(first.operation.progress().unwrap().supplied_bytes, 128);
+        assert_eq!(first.operation.poll_at_ms(), Some(2_100));
         assert_eq!(backend.calls.lock().unwrap().as_slice(), ["create", "get"]);
 
         *backend.state.lock().unwrap() = BackendState::Completed;
         let completed = service.status(first.operation.id().clone()).await.unwrap();
-        assert_eq!(completed.operation.phase(), OperationPhase::Completed);
+        assert_eq!(completed.operation.phase(), OperationPhase::CleanupPending);
+        assert_eq!(
+            completed.operation.cleanup(),
+            &CleanupDisposition::Scheduled {
+                delete_by_ms: 86_400_000
+            }
+        );
         assert_eq!(completed.transcript.unwrap().text(), "final text");
     });
 }

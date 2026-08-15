@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use transcription_core::{SourceAudioError, SourceAudioId, SourceAudioPort, SourceDescriptor};
 
+use super::atomic_file;
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SourceManifest {
@@ -136,27 +138,8 @@ impl PrivateSourceAudioStore {
         manifest: &SourceManifest,
     ) -> Result<(), SourceAudioError> {
         let destination = self.manifest_path(source_id);
-        let temporary = destination.with_extension(format!("json.tmp-{}", uuid::Uuid::new_v4()));
         let bytes = serde_json::to_vec(manifest).map_err(|_| SourceAudioError::Unavailable)?;
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)
-            .map_err(|_| SourceAudioError::Unavailable)?;
-        use std::io::Write;
-        let result = (|| {
-            file.write_all(&bytes)
-                .map_err(|_| SourceAudioError::Unavailable)?;
-            file.sync_all().map_err(|_| SourceAudioError::Unavailable)?;
-            fs::rename(&temporary, &destination).map_err(|_| SourceAudioError::Unavailable)?;
-            fs::File::open(&self.manifest_root)
-                .and_then(|directory| directory.sync_all())
-                .map_err(|_| SourceAudioError::Unavailable)
-        })();
-        if result.is_err() {
-            let _ = fs::remove_file(temporary);
-        }
-        result
+        atomic_file::replace(&destination, &bytes).map_err(|_| SourceAudioError::Unavailable)
     }
 
     fn resolve_contained(&self, relative: &Path) -> Result<PathBuf, SourceAudioError> {
