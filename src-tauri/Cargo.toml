@@ -9,7 +9,12 @@ edition = "2024"
 rust-version = "1.85"
 
 [workspace]
-members = [".", "crates/recorder-core", "plugins/recorder"]
+members = [
+  ".",
+  "crates/recorder-core",
+  "crates/transcription-core",
+  "plugins/recorder",
+]
 resolver = "2"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -22,8 +27,23 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.6.3", features = [] }
 
 [dependencies]
+async-trait = "0.1"
+bytes = "1"
+futures-util = "0.3"
+reqwest = { version = "0.13", default-features = false, features = ["json", "multipart", "rustls", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
 tauri = { version = "2.11.3", features = [] }
 tauri-plugin-recorder = { path = "plugins/recorder" }
+transcription-core = { path = "crates/transcription-core" }
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt", "sync", "time"] }
+tokio-util = { version = "0.7", features = ["io", "rt"] }
+url = "2"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"
 
 # swift-rs 1.0.7 passes only `--arch` to SwiftPM. Xcode 27 then selects the
 # macOS SDK before the compiler-level iOS overrides, producing conflicting

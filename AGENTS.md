@@ -32,11 +32,11 @@
 
 ## Current Feature
 
-- Plan: `specs/002-record-transcribe-journey/plan.md`
-- Specification: `specs/002-record-transcribe-journey/spec.md`
-- Scope: the canonical foreground mobile recording-to-memo behavior, state,
-  privacy, adapter-boundary, and physical-device validation contracts consumed by
-  Issues #3 through #7. Runtime recording remains deferred to those issues.
+- Plan: `specs/004-transcription-upload-usecase/plan.md`
+- Specification: `specs/004-transcription-upload-usecase/spec.md`
+- Scope: Issue #5 transcription operation domain/application contracts, trusted
+  source-audio access, backend upload/status/cancel adapter behavior, restart-safe
+  idempotency, and content-safe recovery. Recorder/UI integration remains in #6.
 
 ## References
 
