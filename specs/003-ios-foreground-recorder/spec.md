@@ -166,8 +166,11 @@ the session without exposing its path.
 
 ### Mobile and Lifecycle Requirements _(mandatory for affected features)_
 
-- **MLR-001**: This feature targets iOS 15+ on physical iPhone hardware;
-  Android behavior and implementation remain unchanged and are out of scope.
+- **MLR-001**: This feature targets iOS 15+ on physical iPhone hardware. Native
+  Android recording, permissions, and lifecycle behavior remain out of scope,
+  but the shared Rust plugin MUST initialize safely on Android and recorder
+  commands MUST return `unsupportedPlatform` until a separate Android adapter
+  is specified.
 - **MLR-002**: The app MUST include a clear microphone usage description and
   grant only the recorder commands and native capabilities required by this
   foreground feature.
@@ -260,6 +263,9 @@ the session without exposing its path.
 - **SC-006**: All recorder contract tests pass without microphone hardware and
   every contract error exposed outside the adapter uses a documented sanitized
   reason code.
+- **SC-007**: On a physical Android device at API 24 or later, the application
+  cold-starts without recorder plugin initialization failure and an attempted
+  recorder command returns the documented `unsupportedPlatform` result.
 
 ## Assumptions
 
@@ -289,7 +295,7 @@ the session without exposing its path.
 
 ## Out of Scope
 
-- Android recorder implementation or Android permission/lifecycle changes
+- Native Android recorder implementation or Android permission/lifecycle changes
 - Background or lock-screen recording and background audio entitlement
 - Realtime/streaming transcription, backend upload, or OpenAI integration
 - VAD, silence removal, normalization, or other derived-audio processing

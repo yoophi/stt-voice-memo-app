@@ -33,9 +33,7 @@ impl<P: RecorderPort> RecorderService<P> {
         &mut self,
         session_id: Option<&RecordingSessionId>,
     ) -> Result<RecordingSession, RecorderError> {
-        let session = self.port.status(session_id)?;
-        self.lifecycle.observe(session.clone());
-        Ok(session)
+        self.refresh_session(session_id)
     }
 
     pub fn start(
@@ -63,24 +61,28 @@ impl<P: RecorderPort> RecorderService<P> {
         &mut self,
         session_id: &RecordingSessionId,
     ) -> Result<RecordingSession, RecorderError> {
-        let current = self.lifecycle.require_active_or_paused(session_id)?;
+        let current = self.refresh_session(Some(session_id))?;
+        self.lifecycle.require_active_or_paused(session_id)?;
         if current.state == RecordingState::Paused {
             return Ok(current);
         }
         let session = self.port.pause(session_id)?;
-        self.lifecycle.pause(session_id, session.duration_ms)
+        self.lifecycle.observe(session.clone());
+        Ok(session)
     }
 
     pub fn resume(
         &mut self,
         session_id: &RecordingSessionId,
     ) -> Result<RecordingSession, RecorderError> {
-        let current = self.lifecycle.require_active_or_paused(session_id)?;
+        let current = self.refresh_session(Some(session_id))?;
+        self.lifecycle.require_active_or_paused(session_id)?;
         if current.state == RecordingState::Recording {
             return Ok(current);
         }
-        self.port.resume(session_id)?;
-        self.lifecycle.resume(session_id)
+        let session = self.port.resume(session_id)?;
+        self.lifecycle.observe(session.clone());
+        Ok(session)
     }
 
     pub fn stop(
@@ -184,6 +186,15 @@ impl<P: RecorderPort> RecorderService<P> {
                 error.cleanup,
                 Some(CleanupOutcome::Pending | CleanupOutcome::Failed)
             )
+    }
+
+    fn refresh_session(
+        &mut self,
+        session_id: Option<&RecordingSessionId>,
+    ) -> Result<RecordingSession, RecorderError> {
+        let session = self.port.status(session_id)?;
+        self.lifecycle.observe(session.clone());
+        Ok(session)
     }
 
     fn terminal_conflict(session_id: &RecordingSessionId) -> RecorderError {

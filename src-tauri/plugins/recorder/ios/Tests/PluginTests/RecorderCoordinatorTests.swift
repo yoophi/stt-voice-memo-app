@@ -175,6 +175,35 @@ final class RecorderCoordinatorTests: XCTestCase {
         }
     }
 
+    func testStartFailureReportsPendingAndFailedDestinationCleanup() async {
+        for cleanup in [CleanupOutcome.pending, .failed] {
+            let audioSession = FakeAudioSession(permission: .granted)
+            let files = FakeRecordingFiles(cleanup: cleanup)
+            let coordinator = RecorderCoordinator(
+                audioSession: audioSession,
+                recorderFactory: FakeRecorderFactory(
+                    capture: FakeCapture(),
+                    creationFails: true
+                ),
+                files: files,
+                notifications: NotificationCenter()
+            )
+
+            do {
+                _ = try await coordinator.start(sessionId: Self.sessionId)
+                XCTFail("start should fail")
+            } catch let error as RecorderPluginError {
+                XCTAssertEqual(error.code, .recorderFailure)
+                XCTAssertTrue(error.retryable)
+                XCTAssertEqual(error.cleanup, cleanup)
+                XCTAssertEqual(audioSession.deactivateCount, 1)
+                XCTAssertEqual(files.removeCount, 1)
+            } catch {
+                XCTFail("unexpected error type")
+            }
+        }
+    }
+
     func testInterruptionWinsRaceWithUserStopAndEmitsOneTerminalEvent() async throws {
         var events: [RecorderEvent] = []
         let audioSession = FakeAudioSession(permission: .granted)

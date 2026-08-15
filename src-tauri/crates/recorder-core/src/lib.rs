@@ -163,7 +163,14 @@ mod tests {
     #[test]
     fn service_calls_port_once_for_repeated_pause_resume_and_stop() {
         let session_id = id("550e8400-e29b-41d4-a716-446655440000");
-        let mut service = RecorderService::new(FakeRecorder::default());
+        let mut fake = FakeRecorder::default();
+        fake.status_results.extend([
+            RecordingSession::recording(session_id.clone()),
+            RecordingSession::paused(session_id.clone(), 500),
+            RecordingSession::paused(session_id.clone(), 500),
+            RecordingSession::recording(session_id.clone()),
+        ]);
+        let mut service = RecorderService::new(fake);
 
         service.start(session_id.clone()).unwrap();
         service.pause(&session_id).unwrap();
@@ -180,8 +187,30 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(
             service.port().calls,
-            vec!["start", "pause", "resume", "stop"]
+            vec![
+                "start", "status", "pause", "status", "status", "resume", "status", "stop"
+            ]
         );
+    }
+
+    #[test]
+    fn resume_reconciles_native_interruption_before_using_cached_recording_state() {
+        let session_id = id("550e8400-e29b-41d4-a716-446655440000");
+        let mut fake = FakeRecorder::default();
+        fake.status_results.push_back(RecordingSession {
+            session_id: Some(session_id.clone()),
+            state: RecordingState::Finalized,
+            started_at_ms: None,
+            duration_ms: 750,
+            terminal_reason: Some(FinalizationReason::Interruption),
+        });
+        let mut service = RecorderService::new(fake);
+        service.start(session_id.clone()).unwrap();
+
+        let error = service.resume(&session_id).unwrap_err();
+
+        assert_eq!(error.code, RecorderErrorCode::InvalidTransition);
+        assert_eq!(service.port().calls, vec!["start", "status"]);
     }
 
     #[test]

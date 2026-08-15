@@ -137,6 +137,7 @@ completion evidence across all stories.
 - [x] T030 Run and fix repository formatting, ESLint, TypeScript, Rust workspace test, clippy, and iOS debug build commands documented in `specs/003-ios-foreground-recorder/quickstart.md`
 - [x] T031 Verify dependency direction, individual command capability scope, absence of background audio entitlement, and absence of raw path/audio/native error logging across `src-tauri/`, `src/shared/api/recorder/`, and `src-tauri/gen/apple/stt-voice-memo-app_iOS/Info.plist`
 - [x] T032 Reconcile requirement and acceptance evidence, document any unavailable physical-device checks, and finalize validation notes in `tests/device/ios-foreground-recorder.md` and `specs/003-ios-foreground-recorder/quickstart.md`
+- [ ] T033 Cold-start the application on a physical Android API 24+ device and record that recorder plugin initialization succeeds and recorder commands return `unsupportedPlatform` in `tests/device/ios-foreground-recorder.md`
 
 ---
 
@@ -200,5 +201,7 @@ Task T011: Define native Codable types in RecorderTypes.swift
   or host tests are supplementary.
 - The plugin may return an internal file URI to trusted Rust adapter code only;
   React, logs, and analytics receive no absolute path.
-- Do not add Android, background audio, upload, transcription, VAD, or memo UI.
+- Do not add native Android recording, background audio, upload, transcription,
+  VAD, or memo UI; Android work here is limited to safe shared-plugin startup
+  and the unsupported-platform contract.
 - Mark every completed task `[X]` only after its named verification passes.

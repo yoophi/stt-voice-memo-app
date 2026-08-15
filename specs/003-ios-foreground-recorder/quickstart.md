@@ -6,6 +6,8 @@
 - Rust stable and the iOS Rust targets used by Tauri
 - Node 22.22+ and pnpm 11
 - A developer-signed physical iPhone running iOS 15 or later
+- A physical Android device running API 24 or later for the shared-plugin
+  startup regression check
 - No audio content in screenshots, console captures, issue comments, or logs
 
 ## Automated contract validation
@@ -14,17 +16,21 @@ Run from the repository root:
 
 ```sh
 pnpm install --frozen-lockfile
-pnpm exec prettier --check src src-tauri/plugins/recorder/ios \
-  specs/003-ios-foreground-recorder tests/device/ios-foreground-recorder.md
+git ls-files -z -- src src-tauri/plugins/recorder/ios \
+  specs/003-ios-foreground-recorder tests/device/ios-foreground-recorder.md \
+  ':(exclude)**/*.swift' \
+  | xargs -0 pnpm exec prettier --check
 pnpm exec eslint .
 pnpm exec tsc -b
+pnpm exec vitest run
 cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
 cargo test --manifest-path src-tauri/Cargo.toml --workspace
 cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets -- -D warnings
 ```
 
-The targeted Prettier scope avoids rewriting pre-existing generated, vendored,
-Spec Kit, and historical feature files unrelated to Issue #4.
+The tracked, Prettier-supported file scope avoids Swift and generated SwiftPM
+output as well as pre-existing vendored, Spec Kit, and historical files
+unrelated to Issue #4. Swift formatting is enforced by the Xcode build.
 
 Expected outcome:
 
@@ -86,6 +92,14 @@ by logging paths or content):
 For cancel/failure cases, verify the session's temporary artifact is absent, or
 that the returned cleanup outcome explicitly records pending/failed cleanup.
 
+## Physical-Android startup regression
+
+Cold-start the application on a physical Android API 24+ device. Confirm that
+the shared recorder plugin initializes without crashing the application, then
+invoke one recorder command through the trusted diagnostic harness and confirm
+the sanitized `unsupportedPlatform` result. This does not authorize native
+Android recording, microphone permission, or lifecycle implementation.
+
 ## Requirement traceability
 
 | Acceptance area                | Primary requirements           | Evidence                                                                   |
@@ -96,21 +110,23 @@ that the returned cleanup outcome explicitly records pending/failed cleanup.
 | Interruption/lifecycle         | FR-011–FR-013, MLR-003–MLR-005 | Swift notification tests and physical interruption/route/background matrix |
 | Privacy/data lifecycle         | FR-014, PDL-001–PDL-005        | Source review, log-field assertions, cleanup inspection                    |
 | Automated contract             | FR-015, SC-006                 | Workspace test and lint commands                                           |
+| Android startup regression     | MLR-001, SC-007                | Physical Android cold launch and unsupported-command result                |
 
 ## Completion gate
 
 Implementation may be code-complete with automated and iOS build checks, but
 GitHub Issue #4 is not fully acceptance-complete until the physical-iPhone
 matrix includes permission denial, interruption, cancellation, five cold
-launches, and successful recording evidence.
+launches, and successful recording evidence, and the physical-Android startup
+regression has passed.
 
 ## Validation result (2026-08-15)
 
 - Relevant Prettier files, ESLint, TypeScript build, and all 12 frontend tests
   passed.
-- Rust formatting, all 16 workspace tests, and workspace clippy passed. The
+- Rust formatting, all 17 workspace tests, and workspace clippy passed. The
   vendored `swift-rs` dependency emitted two non-fatal upstream warnings.
-- All 11 Swift coordinator tests passed on the connected iOS simulator,
+- All 12 Swift coordinator tests passed on the connected iOS simulator,
   including start-failure cleanup and explicit cleanup retry coverage.
 - Rust compiled for both `aarch64-apple-ios-sim` and `aarch64-apple-ios` with
   `IPHONEOS_DEPLOYMENT_TARGET=15.0`.
@@ -120,3 +136,6 @@ launches, and successful recording evidence.
   iOS debug bundle successfully.
 - `xcrun devicectl list devices` showed simulated devices only. Physical-device
   scenarios therefore remain deliberately unchecked in the evidence matrix.
+- Physical Android startup remains unchecked because `adb` is unavailable and
+  no API 24+ device is connected; an Android target compile does not replace
+  this evidence.

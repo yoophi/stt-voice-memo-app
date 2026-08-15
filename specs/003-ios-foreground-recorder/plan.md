@@ -33,8 +33,9 @@ database and no upload
 the injected iOS coordinator where supported, TypeScript build/lint checks, and
 the physical-iPhone matrix in `quickstart.md`
 
-**Target Platform**: iPhone on iOS 15+; host macOS builds receive an explicit
-unsupported-platform adapter, and Android is unchanged
+**Target Platform**: iPhone on iOS 15+; host macOS and Android builds receive an
+explicit unsupported-platform adapter, with Android startup regression checked
+because plugin initialization is shared
 
 **Project Type**: Mobile-first Tauri application with an in-repository native
 mobile plugin and a pure Rust core crate
@@ -56,8 +57,9 @@ _GATE: Passed before Phase 0 and re-checked after Phase 1 design._
 
 - **Mobile first — PASS**: iOS 15+ permission, audio session, route,
   interruption, foreground exit, and physical-device evidence are explicit.
-  Android is unchanged because this issue is the iOS adapter; background,
-  realtime, and desktop recording are excluded.
+  Native Android recording remains excluded, while shared plugin initialization
+  is required to cold-start safely and expose only `unsupportedPlatform` there;
+  background, realtime, and desktop recording are excluded.
 - **Hexagonal Rust — PASS**: `recorder-core` owns pure models, transition rules,
   the `RecorderPort`, and use-case coordination without Tauri, filesystem, or OS
   dependencies. The Tauri plugin and Swift package are inbound/infrastructure

@@ -34,21 +34,23 @@ or credentials in this document or its linked evidence.
 
 | Check                          | Status  | Evidence / notes                                |
 | ------------------------------ | ------- | ----------------------------------------------- |
-| Rust workspace tests           | Passed  | 16 tests: recorder core 12, plugin boundary 4   |
+| Rust workspace tests           | Passed  | 17 tests: recorder core 13, plugin boundary 4   |
 | Rust clippy and formatting     | Passed  | Workspace clean; vendored `swift-rs` warns only |
 | TypeScript tests/build/lint    | Passed  | 12 tests, TypeScript build, and ESLint passed   |
-| Swift coordinator tests        | Passed  | 11 tests on the connected iOS simulator         |
+| Swift coordinator tests        | Passed  | 12 tests on the connected iOS simulator         |
 | iOS simulator target compile   | Passed  | Rust/Swift plugin compiled for iOS simulator    |
 | Android Rust plugin compile    | Passed  | Safe unsupported adapter compiled for arm64     |
+| Physical Android app startup   | Not run | `adb` unavailable; physical API 24+ required    |
 | Unsigned iOS arm64 debug build | Passed  | Tauri produced one unsigned iOS bundle          |
 | Physical iPhone install/build  | Not run | `devicectl` reported simulated devices only     |
 
 ## Completion statement
 
-Issue #4 must not be marked physical-device complete until every required row
-above has actual physical-iPhone evidence. Simulator and mocked tests are
-supplementary.
+Issue #4 must not be marked physical-device complete until every required iPhone
+row above has actual physical-device evidence and the physical Android startup
+regression passes. Simulator, mocked, and compile-only tests are supplementary.
 
-Automated implementation validation is complete. T017, T024, and T029 remain
-open because their acceptance evidence explicitly requires a physical iPhone;
-the absence of a device is not treated as a passing or simulated result.
+Automated implementation validation is complete. T017, T024, T029, and T033
+remain open because their acceptance evidence explicitly requires physical
+devices; the absence of a device is not treated as a passing or simulated
+result.
