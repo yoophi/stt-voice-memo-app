@@ -8,6 +8,9 @@ async function main() {
     "src-tauri/Cargo.toml",
     "src-tauri/tauri.conf.json",
     "src-tauri/gen/apple/stt-voice-memo-app.xcodeproj",
+    "src-tauri/gen/android/settings.gradle",
+    "src-tauri/gen/android/app/build.gradle.kts",
+    "src-tauri/gen/android/app/src/main/AndroidManifest.xml",
   ];
   for (const path of requiredPaths) await access(resolve(repositoryRoot, path));
 
@@ -27,7 +30,23 @@ async function main() {
     throw new Error("MOBILE_BACKEND_CONFIGURATION_EXPOSED");
   }
 
-  process.stdout.write("MOBILE_PATHS_OK apple=src-tauri/gen/apple android=src-tauri/gen/android\n");
+  const androidBuild = await readFile(
+    resolve(repositoryRoot, "src-tauri/gen/android/app/build.gradle.kts"),
+    "utf8",
+  );
+  if (!/compileSdk\s*=\s*36/u.test(androidBuild) || !/minSdk\s*=\s*24/u.test(androidBuild)) {
+    throw new Error("MOBILE_ANDROID_TARGET_INVALID");
+  }
+
+  const androidManifest = await readFile(
+    resolve(repositoryRoot, "src-tauri/gen/android/app/src/main/AndroidManifest.xml"),
+    "utf8",
+  );
+  if (/RECORD_AUDIO|CAMERA|ACCESS_FINE_LOCATION|ACCESS_COARSE_LOCATION/u.test(androidManifest)) {
+    throw new Error("MOBILE_ANDROID_SENSITIVE_PERMISSION_EXPOSED");
+  }
+
+  process.stdout.write("MOBILE_PATHS_OK apple=verified android=verified\n");
 }
 
 await main().catch((error) => {

@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 
 import { classifyOwnedPath, WORKSPACE_AREAS } from "./workspace-map.mjs";
-import { runNode, withTemporaryDirectory } from "./test-support.mjs";
+import { runNode, runNodeWithInput, withTemporaryDirectory } from "./test-support.mjs";
 
 const repositoryRoot = resolve(import.meta.dirname, "../..");
 
@@ -52,6 +52,12 @@ describe("workspace foundation", () => {
   test("keeps the generated Apple project and Android target contract at src-tauri", async () => {
     await expect(
       access(resolve(repositoryRoot, "src-tauri/gen/apple/stt-voice-memo-app.xcodeproj")),
+    ).resolves.toBeUndefined();
+    await expect(
+      access(resolve(repositoryRoot, "src-tauri/gen/android/app/build.gradle.kts")),
+    ).resolves.toBeUndefined();
+    await expect(
+      access(resolve(repositoryRoot, "src-tauri/gen/android/app/src/main/AndroidManifest.xml")),
     ).resolves.toBeUndefined();
 
     const tauriConfig = JSON.parse(await readRepositoryFile("src-tauri/tauri.conf.json"));
@@ -182,6 +188,40 @@ describe("user story 2: canonical contract and secret boundary", () => {
     expect(result.stderr).not.toContain(canary);
     expect(result.stderr).not.toContain("redacted-placeholder");
   });
+
+  test("rejects encoded, minified, and source-map canary representations", async () => {
+    await withTemporaryDirectory("stt-transformed-canary-", async (directory) => {
+      const canary = "stt-synthetic-canary-never-secret";
+      await writeFile(
+        resolve(directory, "encoded.js"),
+        `globalThis.value = "${Buffer.from(canary).toString("base64")}";\n`,
+        "utf8",
+      );
+      await writeFile(
+        resolve(directory, "minified.js"),
+        'globalThis.value="stt-synthetic-canary-"+"never-secret";\n',
+        "utf8",
+      );
+      await writeFile(
+        resolve(directory, "app.js.map"),
+        JSON.stringify({ sourcesContent: [Buffer.from(canary).toString("hex")] }),
+        "utf8",
+      );
+
+      const result = await runNode("scripts/workspace/check-client-secrets.mjs", [
+        "--template",
+        "scripts/workspace/fixtures/client-secrets/backend.env.example",
+        "--scan-dir",
+        directory,
+        "--canary",
+        canary,
+      ]);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("CLIENT_SECRET_CANARY count=3");
+      expect(result.stderr).not.toContain(canary);
+    });
+  });
 });
 
 describe("user story 3: affected validation and mobile preservation", () => {
@@ -226,6 +266,36 @@ describe("user story 3: affected validation and mobile preservation", () => {
     });
   });
 
+  test("reads null-delimited GitHub input without treating stdin as a filesystem path", async () => {
+    const result = await runNodeWithInput(
+      "scripts/workspace/select-scopes.mjs",
+      ["--stdin0"],
+      "src/app/App.tsx\0apps/backend/README.md\0",
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      backend: true,
+      contract: false,
+      mobile: true,
+    });
+  });
+
+  test("selects both previous and current owners for renamed files", async () => {
+    const result = await runNodeWithInput(
+      "scripts/workspace/select-scopes.mjs",
+      ["--name-status0"],
+      "R100\0src/app/Legacy.tsx\0apps/backend/current.ts\0",
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      backend: true,
+      contract: false,
+      mobile: true,
+    });
+  });
+
   test("defines conditional scoped jobs, isolated caches, aggregate, and manual full validation", async () => {
     const workflow = await readRepositoryFile(".github/workflows/validate.yml");
 
@@ -233,6 +303,10 @@ describe("user story 3: affected validation and mobile preservation", () => {
       expect(workflow).toContain(job);
     }
     expect(workflow).toContain("scripts/workspace/select-scopes.mjs");
+    expect(workflow).toContain("git diff --name-status -z");
+    expect(workflow).toContain("--name-status0");
+    expect(workflow).toContain("CHANGES_RESULT: ${{ needs.changes.result }}");
+    expect(workflow).toContain('if [[ "$CHANGES_RESULT" != "success" ]]');
     expect(workflow).toContain("needs.changes.outputs.mobile == 'true'");
     expect(workflow).toContain("needs.changes.outputs.backend == 'true'");
     expect(workflow).toContain("needs.changes.outputs.contract == 'true'");
@@ -242,5 +316,23 @@ describe("user story 3: affected validation and mobile preservation", () => {
     expect(workflow).toContain("workflow_dispatch:");
     expect(workflow).toContain("pnpm validate");
     expect(workflow).not.toMatch(/OPENAI_API_KEY|BACKEND_AUTH_SECRET/u);
+  });
+
+  test("mobile validation includes real boundary, native-host, and secret checks", async () => {
+    const packageJson = JSON.parse(await readRepositoryFile("package.json"));
+    const validation = packageJson.scripts["validate:mobile"];
+
+    expect(validation).toContain("pnpm check:boundaries");
+    expect(validation).toContain("check-mobile-paths.mjs");
+    expect(validation).toContain("check-client-secrets.mjs");
+  });
+
+  test("clean-checkout Swift validation generates the ignored Tauri API first", async () => {
+    const runner = await readRepositoryFile("scripts/workspace/run-swift-tests.mjs");
+
+    expect(runner).toContain('"tauri-plugin-recorder"');
+    expect(runner).toContain('"aarch64-apple-ios"');
+    expect(runner).toContain('IPHONEOS_DEPLOYMENT_TARGET: "15.0"');
+    expect(runner).toContain("prepareTauriApi");
   });
 });

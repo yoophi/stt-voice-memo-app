@@ -1,9 +1,17 @@
-import { readdir, readFile } from "node:fs/promises";
-import { relative, resolve, sep } from "node:path";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const defaultRoot = resolve(import.meta.dirname, "../..");
-const ignoredDirectories = new Set([".git", "node_modules", "target", "dist", "coverage"]);
+import {
+  collectFiles,
+  defaultIgnoredDirectories,
+  extension,
+  repositoryRelative,
+  repositoryRoot,
+} from "./repository-files.mjs";
+
+const defaultRoot = repositoryRoot;
+const ignoredDirectories = new Set([...defaultIgnoredDirectories, "dist"]);
 const textExtensions = new Set([
   ".cjs",
   ".js",
@@ -23,38 +31,6 @@ function parseRoot(arguments_) {
   return index === -1 ? defaultRoot : resolve(defaultRoot, arguments_[index + 1]);
 }
 
-async function collectFiles(root, directory = root) {
-  const entries = await readdir(directory, { withFileTypes: true });
-  const files = [];
-
-  for (const entry of entries) {
-    if (entry.name === ".wtp.yml") continue;
-    const path = resolve(directory, entry.name);
-    if (
-      root === defaultRoot &&
-      path.startsWith(resolve(defaultRoot, "scripts/workspace/fixtures"))
-    ) {
-      continue;
-    }
-    if (entry.isDirectory()) {
-      if (!ignoredDirectories.has(entry.name)) files.push(...(await collectFiles(root, path)));
-    } else {
-      files.push(path);
-    }
-  }
-
-  return files;
-}
-
-function repositoryRelative(root, path) {
-  return relative(root, path).split(sep).join("/");
-}
-
-function extension(path) {
-  const match = /\.[^./]+$/.exec(path);
-  return match?.[0] ?? "";
-}
-
 async function readJson(path) {
   try {
     return JSON.parse(await readFile(path, "utf8"));
@@ -64,7 +40,12 @@ async function readJson(path) {
 }
 
 export async function checkBoundaries(root = defaultRoot) {
-  const files = await collectFiles(root);
+  const fixtures = resolve(defaultRoot, "scripts/workspace/fixtures");
+  const files = await collectFiles([root], {
+    ignoredDirectories,
+    exclude: (path) =>
+      path.endsWith("/.wtp.yml") || (root === defaultRoot && path.startsWith(fixtures)),
+  });
   const violations = [];
   const openApiSources = [];
   for (const path of files.filter((candidate) => candidate.endsWith("/openapi.json"))) {

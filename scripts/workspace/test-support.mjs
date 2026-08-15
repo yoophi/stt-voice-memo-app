@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -44,4 +44,30 @@ export async function runNode(script, arguments_ = [], options = {}) {
       stdout: error.stdout ?? "",
     };
   }
+}
+
+export async function runNodeWithInput(script, arguments_, input) {
+  return new Promise((resolvePromise) => {
+    const child = spawn(process.execPath, [repositoryPath(script), ...arguments_], {
+      cwd: repositoryRoot,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", (error) => {
+      resolvePromise({ exitCode: 1, stderr: `${stderr}${error.message}`, stdout });
+    });
+    child.on("exit", (code) => {
+      resolvePromise({ exitCode: code ?? 1, stderr, stdout });
+    });
+    child.stdin.end(input);
+  });
 }
