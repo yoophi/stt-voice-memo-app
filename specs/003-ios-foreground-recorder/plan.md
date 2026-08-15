@@ -61,13 +61,18 @@ _GATE: Passed before Phase 0 and re-checked after Phase 1 design._
 - **Hexagonal Rust — PASS**: `recorder-core` owns pure models, transition rules,
   the `RecorderPort`, and use-case coordination without Tauri, filesystem, or OS
   dependencies. The Tauri plugin and Swift package are inbound/infrastructure
-  adapters.
+  adapters. Swift is authoritative for live platform state; Rust mirrors the
+  portable lifecycle and refreshes from native status before reporting status or
+  replacing a possibly stale active session.
 - **Feature-Sliced React — PASS**: No UI or state store is introduced. The
   optional guest API lives in `src/shared/api/recorder` as a platform client;
   Issue #6 will own recording-session Zustand state and event reconciliation.
-- **Secure transcription — PASS**: No provider, backend, credential, network, or
-  transcript code is added. Audio stays app-private; logs carry only session IDs
-  and sanitized codes; cancel/failure cleanup is explicit.
+- **Secure transcription — PASS WITH TEMPORARY EXCEPTION**: No provider, backend,
+  credential, network, or transcript code is added. Audio stays app-private;
+  logs carry only session IDs and sanitized codes; cancel/failure cleanup is
+  explicit. Issue #4 cannot provide a safe user retention choice before a
+  consumer owns the finalized artifact, so the bounded exception and its Issue
+  #6 termination conditions are recorded below and in `spec.md`.
 - **Resilient voice flow — PASS**: The state machine, stable session IDs,
   idempotent stop/cancel, interruption/route/background terminal outcomes,
   contract tests, and physical-iPhone matrix are defined.
@@ -185,6 +190,12 @@ only the required microphone usage description, never a background-audio mode.
 
 ## Complexity Tracking
 
-No constitution violations require justification. The additional pure Rust
-crate is the smallest enforceable boundary that keeps domain/application tests
-independent of Tauri and iOS, as required by Principle II.
+| Exception                                                                               | Why required now                                                                                                                            | Rejected alternative                                                                                                                                  | Termination condition                                                                                                                                                                                                                                                                    |
+| --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A finalized source recording has no user-visible retention/deletion control in Issue #4 | The recorder adapter must hand one verified local artifact to the later upload journey, but owns no UI, upload, memo, or durable preference | Automatically deleting on stop would destroy the only source before Issue #6 can consume it; adding retention UI here would violate feature ownership | Issue #6 presents the retention choice, deletes unretained audio after handoff, exposes cleanup recovery, and records physical-device evidence. Issue #7 keeps source-audio deletion independent from memo deletion. The complete journey cannot be production-ready before this closes. |
+
+The additional pure Rust crate is the smallest enforceable boundary that keeps
+domain/application tests independent of Tauri and iOS, as required by Principle
+II. Issue #4 owns this minimal recorder port and lifecycle contract because the
+iOS adapter cannot be tested or integrated without it; Issue #5 owns the
+separate recording-file access and backend transcription ports.

@@ -34,11 +34,12 @@ or credentials in this document or its linked evidence.
 
 | Check                          | Status  | Evidence / notes                                |
 | ------------------------------ | ------- | ----------------------------------------------- |
-| Rust workspace tests           | Passed  | 13 tests: recorder core 9, plugin boundary 4    |
+| Rust workspace tests           | Passed  | 16 tests: recorder core 12, plugin boundary 4   |
 | Rust clippy and formatting     | Passed  | Workspace clean; vendored `swift-rs` warns only |
-| TypeScript tests/build/lint    | Passed  | 11 tests, TypeScript build, and ESLint passed   |
-| Swift coordinator tests        | Passed  | 10 tests on the connected iOS simulator         |
+| TypeScript tests/build/lint    | Passed  | 12 tests, TypeScript build, and ESLint passed   |
+| Swift coordinator tests        | Passed  | 11 tests on the connected iOS simulator         |
 | iOS simulator target compile   | Passed  | Rust/Swift plugin compiled for iOS simulator    |
+| Android Rust plugin compile    | Passed  | Safe unsupported adapter compiled for arm64     |
 | Unsigned iOS arm64 debug build | Passed  | Tauri produced one unsigned iOS bundle          |
 | Physical iPhone install/build  | Not run | `devicectl` reported simulated devices only     |
 

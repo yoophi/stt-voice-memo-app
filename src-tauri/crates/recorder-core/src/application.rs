@@ -33,21 +33,25 @@ impl<P: RecorderPort> RecorderService<P> {
         &mut self,
         session_id: Option<&RecordingSessionId>,
     ) -> Result<RecordingSession, RecorderError> {
-        match session_id {
-            Some(id) if self.lifecycle.current().session_id.as_ref() == Some(id) => {
-                Ok(self.lifecycle.current())
-            }
-            _ => self.port.status(session_id),
-        }
+        let session = self.port.status(session_id)?;
+        self.lifecycle.observe(session.clone());
+        Ok(session)
     }
 
     pub fn start(
         &mut self,
         session_id: RecordingSessionId,
     ) -> Result<RecordingSession, RecorderError> {
-        self.lifecycle.begin(session_id.clone())?;
+        if self.lifecycle.begin(session_id.clone()).is_err() {
+            let native = self.port.status(None)?;
+            self.lifecycle.observe(native);
+            self.lifecycle.begin(session_id.clone())?;
+        }
         match self.port.start(&session_id) {
-            Ok(session) => Ok(session),
+            Ok(session) => {
+                self.lifecycle.observe(session.clone());
+                Ok(session)
+            }
             Err(error) => {
                 self.lifecycle.fail(&session_id, error.clone());
                 Err(error)
@@ -91,6 +95,21 @@ impl<P: RecorderPort> RecorderService<P> {
                 TerminalOutcome::Cancelled(_) => Err(Self::terminal_conflict(session_id)),
             };
         }
+        let observed = self.lifecycle.current();
+        if observed.session_id.as_ref() == Some(session_id)
+            && matches!(
+                observed.state,
+                RecordingState::Finalized | RecordingState::Cancelled | RecordingState::Failed
+            )
+        {
+            return match self.port.stop(session_id, reason) {
+                Ok(recording) => {
+                    self.lifecycle.finalize(recording.clone());
+                    Ok(recording)
+                }
+                Err(error) => Err(error),
+            };
+        }
         self.lifecycle.begin_finalization(session_id, reason)?;
         match self.port.stop(session_id, reason) {
             Ok(recording) => {
@@ -108,17 +127,37 @@ impl<P: RecorderPort> RecorderService<P> {
         &mut self,
         session_id: &RecordingSessionId,
     ) -> Result<CleanupOutcome, RecorderError> {
-        if let Some(terminal) = self.lifecycle.terminal(session_id) {
+        if let Some(terminal) = self.lifecycle.terminal(session_id).cloned() {
             return match terminal {
-                TerminalOutcome::Cancelled(cleanup) => Ok(*cleanup),
-                TerminalOutcome::Failed(error) => Err(error.clone()),
+                TerminalOutcome::Cancelled(cleanup) => Ok(cleanup),
+                TerminalOutcome::Failed(error) if Self::cleanup_retryable(&error) => {
+                    self.retry_cleanup(session_id)
+                }
+                TerminalOutcome::Failed(error) => Err(error),
                 TerminalOutcome::Finalized(_) => Err(Self::terminal_conflict(session_id)),
             };
         }
         self.lifecycle.require_active_or_paused(session_id)?;
-        match self.port.cancel(session_id) {
+        let result = self.port.cancel(session_id);
+        self.apply_cancel_result(session_id, result)
+    }
+
+    fn retry_cleanup(
+        &mut self,
+        session_id: &RecordingSessionId,
+    ) -> Result<CleanupOutcome, RecorderError> {
+        let result = self.port.cancel(session_id);
+        self.apply_cancel_result(session_id, result)
+    }
+
+    fn apply_cancel_result(
+        &mut self,
+        session_id: &RecordingSessionId,
+        result: Result<CleanupOutcome, RecorderError>,
+    ) -> Result<CleanupOutcome, RecorderError> {
+        match result {
             Ok(cleanup @ (CleanupOutcome::Removed | CleanupOutcome::NotFound)) => {
-                self.lifecycle.cancel(session_id, cleanup)?;
+                self.lifecycle.complete_cancel(session_id, cleanup);
                 Ok(cleanup)
             }
             Ok(cleanup @ (CleanupOutcome::Pending | CleanupOutcome::Failed)) => {
@@ -136,6 +175,15 @@ impl<P: RecorderPort> RecorderService<P> {
                 Err(error)
             }
         }
+    }
+
+    fn cleanup_retryable(error: &RecorderError) -> bool {
+        error.code == RecorderErrorCode::CleanupFailure
+            && error.retryable
+            && matches!(
+                error.cleanup,
+                Some(CleanupOutcome::Pending | CleanupOutcome::Failed)
+            )
     }
 
     fn terminal_conflict(session_id: &RecordingSessionId) -> RecorderError {

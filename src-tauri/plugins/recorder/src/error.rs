@@ -1,7 +1,7 @@
 use recorder_core::RecorderError;
-#[cfg(mobile)]
+#[cfg(target_os = "ios")]
 use recorder_core::RecordingSessionId;
-#[cfg(any(mobile, test))]
+#[cfg(any(target_os = "ios", test))]
 use recorder_core::{CleanupOutcome, RecorderErrorCode};
 use serde::ser::{Serialize, SerializeStruct, Serializer};
 
@@ -14,12 +14,7 @@ pub enum Error {
 }
 
 impl Error {
-    #[cfg(target_os = "android")]
-    pub(crate) fn unsupported() -> Self {
-        RecorderError::new(RecorderErrorCode::UnsupportedPlatform, None, false).into()
-    }
-
-    #[cfg(mobile)]
+    #[cfg(target_os = "ios")]
     pub(crate) fn from_mobile(
         error: tauri::plugin::mobile::PluginInvokeError,
         session_id: Option<RecordingSessionId>,
@@ -69,7 +64,7 @@ impl Serialize for Error {
     }
 }
 
-#[cfg(any(mobile, test))]
+#[cfg(any(target_os = "ios", test))]
 fn parse_error_code(code: Option<&str>) -> RecorderErrorCode {
     match code.and_then(|value| value.split(':').next()) {
         Some("invalidSessionId") => RecorderErrorCode::InvalidSessionId,
@@ -91,7 +86,7 @@ fn parse_error_code(code: Option<&str>) -> RecorderErrorCode {
     }
 }
 
-#[cfg(any(mobile, test))]
+#[cfg(any(target_os = "ios", test))]
 fn parse_cleanup(code: Option<&str>) -> Option<CleanupOutcome> {
     match code.and_then(|value| value.split_once(':').map(|(_, cleanup)| cleanup)) {
         Some("removed") => Some(CleanupOutcome::Removed),

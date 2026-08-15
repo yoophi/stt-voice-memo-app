@@ -47,8 +47,12 @@ native file path is adapter-private and is never sent directly to React or logs.
 
 ## Deferred implementation ownership
 
-- Issue #4 owns the Swift iOS adapter and its Tauri plugin/capabilities.
+- Issue #4 owns the minimal platform-neutral recorder port/lifecycle contract,
+  its transition tests, the Swift iOS adapter, and its Tauri
+  plugin/capabilities.
 - Equivalent Android native implementation requires its own explicit task/scope;
   this contract must be used unchanged unless Issue #2 is amended.
-- Issue #5 owns the Rust port shape and application transition tests.
+- Issue #5 consumes the finalized recorder descriptor and owns the separate
+  recording-file access, backend transcription port, and upload application
+  transition tests. It does not redefine the recorder state machine.
 - Issue #6 owns event reconciliation between native, Rust, and React layers.

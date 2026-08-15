@@ -365,6 +365,10 @@ impl RecordingLifecycle {
         self.terminal.get(session_id)
     }
 
+    pub fn observe(&mut self, session: RecordingSession) {
+        self.current = Some(session);
+    }
+
     pub fn begin(
         &mut self,
         session_id: RecordingSessionId,
@@ -466,6 +470,18 @@ impl RecordingLifecycle {
         self.terminal
             .insert(session_id.clone(), TerminalOutcome::Cancelled(cleanup));
         Ok(())
+    }
+
+    pub fn complete_cancel(&mut self, session_id: &RecordingSessionId, cleanup: CleanupOutcome) {
+        self.current = Some(RecordingSession {
+            session_id: Some(session_id.clone()),
+            state: RecordingState::Cancelled,
+            started_at_ms: None,
+            duration_ms: 0,
+            terminal_reason: None,
+        });
+        self.terminal
+            .insert(session_id.clone(), TerminalOutcome::Cancelled(cleanup));
     }
 
     pub fn fail(&mut self, session_id: &RecordingSessionId, error: RecorderError) {

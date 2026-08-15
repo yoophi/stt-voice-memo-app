@@ -8,18 +8,22 @@ use recorder_core::{
 };
 use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
-use tauri::{
-    AppHandle, Runtime,
-    plugin::{PluginApi, PluginHandle},
-};
+#[cfg(target_os = "ios")]
+use tauri::plugin::PluginHandle;
+use tauri::{AppHandle, Runtime, plugin::PluginApi};
 
+#[cfg(target_os = "ios")]
 use crate::error::Error;
 use crate::models::{NativeFinalizedRecording, SessionRequest, StatusRequest, StopRequest};
 
 #[cfg(target_os = "ios")]
 tauri::ios_plugin_binding!(init_plugin_recorder);
 
+#[cfg(target_os = "ios")]
 pub(crate) struct PlatformRecorder<R: Runtime>(PluginHandle<R>);
+
+#[cfg(target_os = "android")]
+pub(crate) struct PlatformRecorder<R: Runtime>(std::marker::PhantomData<fn() -> R>);
 
 pub(crate) fn init<R: Runtime, C: DeserializeOwned>(
     _app: &AppHandle<R>,
@@ -29,12 +33,18 @@ pub(crate) fn init<R: Runtime, C: DeserializeOwned>(
     let handle = api
         .register_ios_plugin(init_plugin_recorder)
         .map_err(|error| Error::from_mobile(error, None))?;
+    #[cfg(target_os = "ios")]
+    return Ok(PlatformRecorder(handle));
+
     #[cfg(target_os = "android")]
-    return Err(Error::unsupported());
-    Ok(PlatformRecorder(handle))
+    {
+        let _ = api;
+        Ok(PlatformRecorder(std::marker::PhantomData))
+    }
 }
 
 impl<R: Runtime> PlatformRecorder<R> {
+    #[cfg(target_os = "ios")]
     fn invoke<T: DeserializeOwned, P: serde::Serialize>(
         &self,
         command: &str,
@@ -46,6 +56,20 @@ impl<R: Runtime> PlatformRecorder<R> {
                 Error::Recorder(error) => error,
             }
         })
+    }
+
+    #[cfg(target_os = "android")]
+    fn invoke<T: DeserializeOwned, P: serde::Serialize>(
+        &self,
+        _command: &str,
+        _payload: P,
+        session_id: Option<RecordingSessionId>,
+    ) -> Result<T, RecorderError> {
+        Err(RecorderError::new(
+            RecorderErrorCode::UnsupportedPlatform,
+            session_id,
+            false,
+        ))
     }
 }
 
@@ -156,7 +180,11 @@ fn validate_native_recording(
         return Err(invalid());
     }
     let metadata = std::fs::metadata(&path).map_err(|_| invalid())?;
-    if !metadata.is_file() || metadata.len() == 0 {
+    if !metadata.is_file()
+        || metadata.len() == 0
+        || metadata.len() != native.byte_length
+        || native.session_id != session_id.to_string()
+    {
         return Err(invalid());
     }
     let mut file = File::open(&path).map_err(|_| invalid())?;
@@ -179,7 +207,7 @@ fn validate_native_recording(
         "audio/mp4",
         "m4a",
         native.duration_ms,
-        metadata.len(),
+        native.byte_length,
         native.sample_rate_hz,
         native.channel_count,
         checksum,

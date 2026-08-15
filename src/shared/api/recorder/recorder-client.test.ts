@@ -102,9 +102,11 @@ describe("recorder client", () => {
         reason: "interruption",
         recording: {
           artifactId: "c56a4180-65aa-42ec-a945-5fd21dec0538",
+          sessionId,
           mimeType: "audio/mp4",
           fileExtension: "m4a",
           durationMs: 750,
+          byteLength: 128,
           sampleRateHz: 44_100,
           channelCount: 1,
           sha256: "a".repeat(64),
@@ -128,10 +130,39 @@ describe("recorder client", () => {
         eventId: "f47ac10b-58cc-4372-a567-0e02b2c3d479",
         sequence: 2,
         reason: "interruption",
+        recording: expect.objectContaining({ sessionId, byteLength: 128 }),
       }),
     );
     expect(handler.mock.calls[0]?.[0].recording).not.toHaveProperty("fileUri");
     await remove();
     expect(unregister).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a finalized event whose recording belongs to another session", async () => {
+    mockedAddPluginListener.mockImplementation(async (_plugin, _event, callback) => {
+      expect(() =>
+        callback({
+          eventId: "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+          sessionId,
+          sequence: 1,
+          state: "finalized",
+          recording: {
+            artifactId: "c56a4180-65aa-42ec-a945-5fd21dec0538",
+            sessionId: "a3bb189e-8bf9-3888-9912-ace4e6543002",
+            mimeType: "audio/mp4",
+            fileExtension: "m4a",
+            durationMs: 750,
+            byteLength: 128,
+            sampleRateHz: 44_100,
+            channelCount: 1,
+            sha256: "a".repeat(64),
+            finalizationReason: "userStop",
+          },
+        }),
+      ).toThrow("belongs to another session");
+      return { unregister: vi.fn() } as never;
+    });
+
+    await onRecorderEvent(vi.fn());
   });
 });

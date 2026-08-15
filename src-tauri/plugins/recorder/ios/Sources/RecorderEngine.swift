@@ -29,7 +29,7 @@ protocol RecorderCreating: AnyObject {
 @MainActor
 protocol RecordingFileManaging {
     func prepareDestination(sessionId: String) throws -> URL
-    func finalize(url: URL, durationMs: UInt64, reason: FinalizationReason) throws
+    func finalize(sessionId: String, url: URL, durationMs: UInt64, reason: FinalizationReason) throws
         -> NativeFinalizedRecording
     func remove(url: URL) -> CleanupOutcome
 }
@@ -38,7 +38,14 @@ extension AVAudioRecorder: AudioCapturing {}
 
 @MainActor
 final class SystemAudioSession: AudioSessionControlling {
+    private struct Configuration {
+        let category: AVAudioSession.Category
+        let mode: AVAudioSession.Mode
+        let options: AVAudioSession.CategoryOptions
+    }
+
     private let session = AVAudioSession.sharedInstance()
+    private var previousConfiguration: Configuration?
 
     func permissionStatus() -> RecorderPermissionState {
         if #available(iOS 17.0, *) {
@@ -74,16 +81,35 @@ final class SystemAudioSession: AudioSessionControlling {
     }
 
     func activate() throws {
+        if previousConfiguration == nil {
+            previousConfiguration = Configuration(
+                category: session.category,
+                mode: session.mode,
+                options: session.categoryOptions
+            )
+        }
         do {
             try session.setCategory(.record, mode: .default, options: [])
             try session.setActive(true)
         } catch {
+            restoreConfiguration()
             throw RecorderPluginError(code: .audioSessionFailure, retryable: true)
         }
     }
 
     func deactivate() {
         try? session.setActive(false, options: .notifyOthersOnDeactivation)
+        restoreConfiguration()
+    }
+
+    private func restoreConfiguration() {
+        guard let previousConfiguration else { return }
+        try? session.setCategory(
+            previousConfiguration.category,
+            mode: previousConfiguration.mode,
+            options: previousConfiguration.options
+        )
+        self.previousConfiguration = nil
     }
 }
 
@@ -138,7 +164,7 @@ struct SystemRecordingFiles: RecordingFileManaging {
         }
     }
 
-    func finalize(url: URL, durationMs: UInt64, reason: FinalizationReason) throws
+    func finalize(sessionId: String, url: URL, durationMs: UInt64, reason: FinalizationReason) throws
         -> NativeFinalizedRecording
     {
         guard durationMs > 0, url.pathExtension == "m4a" else {
@@ -160,8 +186,10 @@ struct SystemRecordingFiles: RecordingFileManaging {
             }
             return NativeFinalizedRecording(
                 artifactId: UUID().uuidString.lowercased(),
+                sessionId: sessionId,
                 fileUri: url.absoluteString,
                 durationMs: durationMs,
+                byteLength: bytes.uint64Value,
                 sampleRateHz: UInt32(format.sampleRate.rounded()),
                 channelCount: UInt16(format.channelCount),
                 sha256: try Self.sha256(url: url),
@@ -214,6 +242,7 @@ private enum TerminalResult {
     case finalized(NativeFinalizedRecording)
     case cancelled(CleanupOutcome)
     case failed(RecorderPluginError)
+    case cleanupPending(RecorderPluginError, URL)
 }
 
 @MainActor
@@ -300,8 +329,6 @@ final class RecorderCoordinator {
             try audioSession.activate()
             let capture = try recorderFactory.makeRecorder(destination: destination)
             guard capture.prepareToRecord(), capture.record() else {
-                audioSession.deactivate()
-                _ = files.remove(url: destination)
                 throw RecorderPluginError(code: .recorderFailure, retryable: true)
             }
             let recording = ActiveRecording(
@@ -316,6 +343,8 @@ final class RecorderCoordinator {
             emit(sessionId: sessionId, state: .recording)
             return result
         } catch let error as RecorderPluginError {
+            audioSession.deactivate()
+            _ = files.remove(url: destination)
             throw error
         } catch {
             audioSession.deactivate()
@@ -354,6 +383,7 @@ final class RecorderCoordinator {
             switch terminal {
             case .finalized(let recording): return recording
             case .failed(let error): throw error
+            case .cleanupPending(let error, _): throw error
             case .cancelled: throw RecorderPluginError(code: .terminalConflict)
             }
         }
@@ -368,6 +398,7 @@ final class RecorderCoordinator {
         audioSession.deactivate()
         do {
             let finalized = try files.finalize(
+                sessionId: sessionId,
                 url: recording.destination,
                 durationMs: durationMs,
                 reason: reason
@@ -409,6 +440,8 @@ final class RecorderCoordinator {
         if let terminal = terminals[sessionId] {
             switch terminal {
             case .cancelled(let cleanup): return cleanup
+            case .cleanupPending(_, let destination):
+                return try retryCleanup(sessionId: sessionId, destination: destination)
             case .failed(let error): throw error
             case .finalized: throw RecorderPluginError(code: .terminalConflict)
             }
@@ -424,13 +457,30 @@ final class RecorderCoordinator {
                 retryable: true,
                 cleanup: cleanup
             )
-            terminals[sessionId] = .failed(error)
+            terminals[sessionId] = .cleanupPending(error, recording.destination)
             emit(sessionId: sessionId, state: .failed, cleanup: cleanup)
             throw error
         }
         terminals[sessionId] = .cancelled(cleanup)
         emit(sessionId: sessionId, state: .cancelled, cleanup: cleanup)
         return cleanup
+    }
+
+    private func retryCleanup(sessionId: String, destination: URL) throws -> CleanupOutcome {
+        let cleanup = files.remove(url: destination)
+        if cleanup == .removed || cleanup == .notFound {
+            terminals[sessionId] = .cancelled(cleanup)
+            emit(sessionId: sessionId, state: .cancelled, cleanup: cleanup)
+            return cleanup
+        }
+        let error = RecorderPluginError(
+            code: .cleanupFailure,
+            retryable: true,
+            cleanup: cleanup
+        )
+        terminals[sessionId] = .cleanupPending(error, destination)
+        emit(sessionId: sessionId, state: .failed, cleanup: cleanup)
+        throw error
     }
 
     func handleSystemStop(reason: FinalizationReason) {
@@ -533,6 +583,14 @@ final class RecorderCoordinator {
                 terminalReason: nil
             )
         case .failed:
+            RecordingSession(
+                sessionId: sessionId,
+                state: .failed,
+                startedAtMs: nil,
+                durationMs: 0,
+                terminalReason: nil
+            )
+        case .cleanupPending:
             RecordingSession(
                 sessionId: sessionId,
                 state: .failed,

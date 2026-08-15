@@ -25,8 +25,10 @@ pub(crate) struct StopRequest {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NativeFinalizedRecording {
     pub artifact_id: String,
+    pub session_id: String,
     pub file_uri: String,
     pub duration_ms: u64,
+    pub byte_length: u64,
     pub sample_rate_hz: u32,
     pub channel_count: u16,
     pub sha256: String,
@@ -83,8 +85,10 @@ mod tests {
     fn native_locator_is_deserializable_but_not_part_of_public_type() {
         let native: NativeFinalizedRecording = serde_json::from_value(serde_json::json!({
             "artifactId": "c56a4180-65aa-42ec-a945-5fd21dec0538",
+            "sessionId": "550e8400-e29b-41d4-a716-446655440000",
             "fileUri": "file:///private/app/Library/Application%20Support/Recordings/test.m4a",
             "durationMs": 500,
+            "byteLength": 128,
             "sampleRateHz": 44100,
             "channelCount": 1,
             "sha256": "a".repeat(64),

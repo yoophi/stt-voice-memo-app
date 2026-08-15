@@ -91,23 +91,23 @@ final class RecorderCoordinatorTests: XCTestCase {
         }
     }
 
-    func testCancelReportsAndStoresPendingCleanupWithoutDeletingTwice() async throws {
-        let files = FakeRecordingFiles(cleanup: .pending)
+    func testRepeatedCancelRetriesPendingCleanupUntilRemoval() async throws {
+        let files = FakeRecordingFiles(cleanupResults: [.pending, .removed])
         let coordinator = makeCoordinator(files: files)
         _ = try await coordinator.start(sessionId: Self.sessionId)
 
-        for _ in 0..<2 {
-            do {
-                _ = try coordinator.cancel(sessionId: Self.sessionId)
-                XCTFail("pending cleanup should be retryable failure")
-            } catch let error as RecorderPluginError {
-                XCTAssertEqual(error.code, .cleanupFailure)
-                XCTAssertTrue(error.retryable)
-                XCTAssertEqual(error.cleanup, .pending)
-            }
+        do {
+            _ = try coordinator.cancel(sessionId: Self.sessionId)
+            XCTFail("pending cleanup should be retryable failure")
+        } catch let error as RecorderPluginError {
+            XCTAssertEqual(error.code, .cleanupFailure)
+            XCTAssertTrue(error.retryable)
+            XCTAssertEqual(error.cleanup, .pending)
         }
+        let retried = try coordinator.cancel(sessionId: Self.sessionId)
 
-        XCTAssertEqual(files.removeCount, 1)
+        XCTAssertEqual(retried, .removed)
+        XCTAssertEqual(files.removeCount, 2)
     }
 
     func testStopAfterCancelReturnsTerminalConflict() async throws {
@@ -144,6 +144,37 @@ final class RecorderCoordinatorTests: XCTestCase {
         }
     }
 
+    func testStartFailureAlwaysDeactivatesSessionAndRemovesDestination() async {
+        for failure in StartFailure.allCases {
+            let audioSession = FakeAudioSession(
+                permission: .granted,
+                activationFails: failure == .activation
+            )
+            let capture = FakeCapture(
+                prepareResult: failure != .prepare,
+                recordResult: failure != .record
+            )
+            let files = FakeRecordingFiles()
+            let coordinator = RecorderCoordinator(
+                audioSession: audioSession,
+                recorderFactory: FakeRecorderFactory(
+                    capture: capture,
+                    creationFails: failure == .factory
+                ),
+                files: files,
+                notifications: NotificationCenter()
+            )
+
+            do {
+                _ = try await coordinator.start(sessionId: Self.sessionId)
+                XCTFail("\(failure) should fail")
+            } catch {
+                XCTAssertEqual(audioSession.deactivateCount, 1)
+                XCTAssertEqual(files.removeCount, 1)
+            }
+        }
+    }
+
     func testInterruptionWinsRaceWithUserStopAndEmitsOneTerminalEvent() async throws {
         var events: [RecorderEvent] = []
         let audioSession = FakeAudioSession(permission: .granted)
@@ -161,6 +192,8 @@ final class RecorderCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(repeated.finalizationReason, .interruption)
         XCTAssertEqual(events.filter { $0.state == .finalized }.count, 1)
+        XCTAssertEqual(events.last?.recording?.sessionId, Self.sessionId)
+        XCTAssertEqual(events.last?.recording?.byteLength, 128)
         XCTAssertEqual(audioSession.deactivateCount, 1)
     }
 
@@ -228,19 +261,33 @@ final class RecorderCoordinatorTests: XCTestCase {
     private static let sessionId = "550e8400-e29b-41d4-a716-446655440000"
 }
 
+private enum StartFailure: CaseIterable {
+    case activation
+    case factory
+    case prepare
+    case record
+}
+
 @MainActor
 private final class FakeAudioSession: AudioSessionControlling {
     var permission: RecorderPermissionState
+    let activationFails: Bool
     var activateCount = 0
     var deactivateCount = 0
 
-    init(permission: RecorderPermissionState) {
+    init(permission: RecorderPermissionState, activationFails: Bool = false) {
         self.permission = permission
+        self.activationFails = activationFails
     }
 
     func permissionStatus() -> RecorderPermissionState { permission }
     func requestPermission() async -> RecorderPermissionState { permission }
-    func activate() throws { activateCount += 1 }
+    func activate() throws {
+        activateCount += 1
+        if activationFails {
+            throw RecorderPluginError(code: .audioSessionFailure, retryable: true)
+        }
+    }
     func deactivate() { deactivateCount += 1 }
 }
 
@@ -251,12 +298,19 @@ private final class FakeCapture: AudioCapturing {
     var recordCount = 0
     var pauseCount = 0
     var stopCount = 0
+    let prepareResult: Bool
+    let recordResult: Bool
 
-    func prepareToRecord() -> Bool { true }
+    init(prepareResult: Bool = true, recordResult: Bool = true) {
+        self.prepareResult = prepareResult
+        self.recordResult = recordResult
+    }
+
+    func prepareToRecord() -> Bool { prepareResult }
     func record() -> Bool {
         recordCount += 1
-        isRecording = true
-        return true
+        isRecording = recordResult
+        return recordResult
     }
     func pause() {
         pauseCount += 1
@@ -271,38 +325,45 @@ private final class FakeCapture: AudioCapturing {
 @MainActor
 private final class FakeRecorderFactory: RecorderCreating {
     let capture: FakeCapture
+    let creationFails: Bool
     var createCount = 0
 
-    init(capture: FakeCapture) {
+    init(capture: FakeCapture, creationFails: Bool = false) {
         self.capture = capture
+        self.creationFails = creationFails
     }
 
     func makeRecorder(destination: URL) throws -> AudioCapturing {
         createCount += 1
+        if creationFails {
+            throw RecorderPluginError(code: .recorderFailure, retryable: true)
+        }
         return capture
     }
 }
 
 @MainActor
 private final class FakeRecordingFiles: RecordingFileManaging {
-    let cleanup: CleanupOutcome
+    var cleanupResults: [CleanupOutcome]
     var removeCount = 0
 
-    init(cleanup: CleanupOutcome = .removed) {
-        self.cleanup = cleanup
+    init(cleanup: CleanupOutcome = .removed, cleanupResults: [CleanupOutcome]? = nil) {
+        self.cleanupResults = cleanupResults ?? [cleanup]
     }
 
     func prepareDestination(sessionId: String) throws -> URL {
         URL(fileURLWithPath: "/private/app/Library/Application Support/Recordings/\(sessionId).m4a")
     }
 
-    func finalize(url: URL, durationMs: UInt64, reason: FinalizationReason) throws
+    func finalize(sessionId: String, url: URL, durationMs: UInt64, reason: FinalizationReason) throws
         -> NativeFinalizedRecording
     {
         NativeFinalizedRecording(
             artifactId: "c56a4180-65aa-42ec-a945-5fd21dec0538",
+            sessionId: sessionId,
             fileUri: url.absoluteString,
             durationMs: durationMs,
+            byteLength: 128,
             sampleRateHz: 44_100,
             channelCount: 1,
             sha256: String(repeating: "a", count: 64),
@@ -312,6 +373,9 @@ private final class FakeRecordingFiles: RecordingFileManaging {
 
     func remove(url: URL) -> CleanupOutcome {
         removeCount += 1
-        return cleanup
+        if cleanupResults.count > 1 {
+            return cleanupResults.removeFirst()
+        }
+        return cleanupResults[0]
     }
 }

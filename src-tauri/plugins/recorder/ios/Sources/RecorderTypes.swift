@@ -69,8 +69,10 @@ struct RecordingSession: Codable, Equatable {
 
 struct NativeFinalizedRecording: Codable, Equatable {
     let artifactId: String
+    let sessionId: String
     let fileUri: String
     let durationMs: UInt64
+    let byteLength: UInt64
     let sampleRateHz: UInt32
     let channelCount: UInt16
     let sha256: String
@@ -79,9 +81,11 @@ struct NativeFinalizedRecording: Codable, Equatable {
     var eventRecording: EventRecording {
         EventRecording(
             artifactId: artifactId,
+            sessionId: sessionId,
             mimeType: "audio/mp4",
             fileExtension: "m4a",
             durationMs: durationMs,
+            byteLength: byteLength,
             sampleRateHz: sampleRateHz,
             channelCount: channelCount,
             sha256: sha256,
@@ -92,9 +96,11 @@ struct NativeFinalizedRecording: Codable, Equatable {
 
 struct EventRecording: Codable, Equatable {
     let artifactId: String
+    let sessionId: String
     let mimeType: String
     let fileExtension: String
     let durationMs: UInt64
+    let byteLength: UInt64
     let sampleRateHz: UInt32
     let channelCount: UInt16
     let sha256: String

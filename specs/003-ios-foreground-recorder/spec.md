@@ -188,11 +188,28 @@ the session without exposing its path.
   promotes it to finalized source audio for later application use, while cancel
   and unrecoverable failure delete it.
 - **PDL-003**: A finalized source recording MUST remain local until a later
-  application use case applies the canonical retention or deletion policy.
+  application use case applies the canonical retention or deletion policy. This
+  adapter does not automatically delete a successful recording before its
+  consumer can upload or persist it.
 - **PDL-004**: Raw audio, audio content, absolute paths, native error text, and
   future provider credentials MUST be excluded from default logs and analytics.
 - **PDL-005**: Cleanup-pending artifacts MUST remain app-private, associated with
   a sanitized session identity, and visible to application-level recovery.
+
+### Finalized-audio retention exception
+
+- Issue #4 retains a successful source recording in app-private storage because
+  it has no upload, memo, or user-choice surface that can safely decide its fate.
+- The adapter never transmits the recording and deletes active or unusable
+  artifacts on cancel/failure; a repeated cancel retries incomplete cleanup.
+- This is a temporary Constitution IV exception, not a permanent retention
+  policy. It ends in Issue #6, which MUST present the source-audio retention
+  decision, delete unretained audio after the upload/transcription handoff, and
+  expose deletion recovery. Issue #7 MUST keep source-audio deletion independent
+  from memo-text retention.
+- Until Issue #6 satisfies those conditions, this adapter may be validated and
+  integrated as a dependency but the complete record-to-memo lifecycle MUST NOT
+  be declared production-ready.
 
 ### Architecture Impact _(mandatory)_
 

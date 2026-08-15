@@ -34,6 +34,8 @@ command exists for the same user action when the UI wants a separate step.
 - The first terminal trigger stores its result keyed by `sessionId`.
 - Repeated `stop` returns the same finalized descriptor if stop/finalization won.
 - Repeated `cancel` returns `removed` or `notFound` if cancel won.
+- Repeated `cancel` after `pending` or `failed` cleanup invokes deletion again;
+  success stores the stable cancelled outcome.
 - A conflicting terminal command returns the stored terminal outcome as a typed
   conflict and never creates/deletes a second artifact.
 - Native interruption, route change, media reset, foreground exit, user stop,
@@ -43,8 +45,9 @@ command exists for the same user action when the UI wants a separate step.
 
 Rust delegates the same snake-case command names to Swift with normalized input.
 Swift may include `fileUri` in its stop result to Rust. The Rust adapter validates
-and consumes that field; it MUST remove it before forming the public TypeScript
-result or event.
+and consumes that field before forming the public stop result. Swift constructs a
+separate event recording projection containing the full public descriptor and no
+`fileUri`; the TypeScript boundary validates that projection again.
 
 ## Event stream
 
@@ -94,9 +97,10 @@ app-private directory internally.
 ## Desktop and Android behavior
 
 Host desktop calls return `unsupportedPlatform` and perform no filesystem/audio
-work. This feature does not register or change an Android native plugin. Android
-implementation must conform to the same normalized public command outcomes in a
-separate issue.
+work. On Android the Rust plugin initializes without registering a native
+recorder adapter, preserving application startup; recorder commands return the
+same sanitized `unsupportedPlatform` result. A future Android implementation
+must conform to the normalized public contract in a separate issue.
 
 ## Contract test matrix
 

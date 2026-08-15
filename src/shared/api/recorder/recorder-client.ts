@@ -34,16 +34,7 @@ export interface FinalizedRecording {
   finalizationReason: FinalizationReason;
 }
 
-export interface RecorderEventRecording {
-  artifactId: string;
-  mimeType: "audio/mp4";
-  fileExtension: "m4a";
-  durationMs: number;
-  sampleRateHz: number;
-  channelCount: number;
-  sha256: string;
-  finalizationReason: FinalizationReason;
-}
+export type RecorderEventRecording = FinalizedRecording;
 
 export interface RecorderEvent {
   eventId: string;
@@ -148,6 +139,9 @@ function sanitizeRecorderEvent(value: unknown): RecorderEvent {
   }
   if (isRecord(value.recording)) {
     event.recording = sanitizeEventRecording(value.recording);
+    if (event.recording.sessionId !== event.sessionId) {
+      throw new TypeError("recorder event recording belongs to another session");
+    }
   }
   if (value.cleanup !== undefined && value.cleanup !== null) {
     event.cleanup = cleanupField(value, "cleanup");
@@ -158,9 +152,11 @@ function sanitizeRecorderEvent(value: unknown): RecorderEvent {
 function sanitizeEventRecording(value: Record<string, unknown>): RecorderEventRecording {
   const recording: RecorderEventRecording = {
     artifactId: stringField(value, "artifactId"),
+    sessionId: stringField(value, "sessionId"),
     mimeType: literalField(value, "mimeType", "audio/mp4"),
     fileExtension: literalField(value, "fileExtension", "m4a"),
     durationMs: positiveNumberField(value, "durationMs"),
+    byteLength: positiveNumberField(value, "byteLength"),
     sampleRateHz: positiveNumberField(value, "sampleRateHz"),
     channelCount: positiveNumberField(value, "channelCount"),
     sha256: stringField(value, "sha256"),

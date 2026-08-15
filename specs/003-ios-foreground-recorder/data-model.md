@@ -34,6 +34,10 @@ Validation:
 Invariants:
 
 - The service has zero or one nonterminal session.
+- The Swift coordinator is authoritative for live capture and OS-driven terminal
+  transitions. The Rust application lifecycle is a portable command-side mirror
+  and MUST refresh from native status before returning status or replacing a
+  possibly stale active session.
 - Repeated pause while paused and resume while recording return the stable
   current snapshot without another native action.
 - The first terminal trigger owns finalization. Later stop/cancel/lifecycle
