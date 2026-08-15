@@ -252,7 +252,7 @@ private struct ActiveRecording {
 }
 
 private enum TerminalIntent {
-    case stop(FinalizationReason)
+    case stop(FinalizationReason, durationMs: UInt64)
     case cancel
 }
 
@@ -475,19 +475,21 @@ final class RecorderCoordinator {
             throw RecorderPluginError(code: .invalidTransition)
         }
         let winnerReason: FinalizationReason
+        let durationMs: UInt64
         switch recording.terminalIntent {
-        case .stop(let firstReason):
+        case .stop(let firstReason, let firstDurationMs):
             winnerReason = firstReason
+            durationMs = firstDurationMs
         case .cancel:
             throw RecorderPluginError(code: .terminalConflict)
         case nil:
             winnerReason = reason
-            recording.terminalIntent = .stop(reason)
+            durationMs = UInt64(max(0, recording.capture.currentTime) * 1_000)
+            recording.terminalIntent = .stop(reason, durationMs: durationMs)
             recording.state = .finalizing
             active = recording
             recording.capture.stop()
         }
-        let durationMs = UInt64(max(0, recording.capture.currentTime) * 1_000)
         try deactivateAudioSession()
         do {
             let finalized = try files.finalize(
@@ -696,7 +698,7 @@ final class RecorderCoordinator {
             startedAtMs: recording.startedAtMs,
             durationMs: UInt64(max(0, recording.capture.currentTime) * 1_000),
             terminalReason: {
-                if case .stop(let reason) = recording.terminalIntent { return reason }
+                if case .stop(let reason, _) = recording.terminalIntent { return reason }
                 return nil
             }()
         )

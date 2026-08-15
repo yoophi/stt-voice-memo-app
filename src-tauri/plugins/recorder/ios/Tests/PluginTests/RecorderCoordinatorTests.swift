@@ -95,6 +95,7 @@ final class RecorderCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(finalized.sessionId, Self.sessionId)
         XCTAssertEqual(finalized.finalizationReason, .interruption)
+        XCTAssertEqual(finalized.durationMs, 750)
         XCTAssertEqual(audioSession.deactivateCount, 2)
         XCTAssertEqual(capture.stopCount, 1)
         XCTAssertEqual(files.finalizeCount, 1)
@@ -514,6 +515,7 @@ private final class FakeCapture: AudioCapturing {
     func stop() {
         stopCount += 1
         isRecording = false
+        currentTime = 0
     }
 }
 
