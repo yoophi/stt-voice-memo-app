@@ -575,11 +575,21 @@ fn terminal_cleanup_rejects_incompatible_remote_state_without_replacing_winner()
         assert!(rejected.operation.retry().is_none());
 
         let unchanged = service
-            .retry(rejected.operation.id().clone())
+            .retry_automatically(rejected.operation.id().clone())
             .await
             .unwrap();
         assert_eq!(unchanged.operation, rejected.operation);
         assert_eq!(backend.calls.lock().unwrap().as_slice(), ["delete"]);
+
+        let retried = service
+            .retry(rejected.operation.id().clone())
+            .await
+            .unwrap();
+        assert_eq!(retried.operation.cleanup_attempts(), 2);
+        assert_eq!(
+            backend.calls.lock().unwrap().as_slice(),
+            ["delete", "delete"]
+        );
     });
 }
 
@@ -635,6 +645,110 @@ fn terminal_cleanup_persists_identity_mismatch_with_request_correlation() {
         assert_eq!(rejected.operation.cleanup_attempts(), 1);
         assert!(rejected.operation.retry().is_none());
         assert_eq!(backend.calls.lock().unwrap().as_slice(), ["delete"]);
+    });
+}
+
+#[test]
+fn cancellation_cleanup_persists_identity_mismatch_and_remains_user_reconcilable() {
+    block_on(async {
+        let repository = Arc::new(MemoryRepository::default());
+        let backend = Arc::new(Backend::new(BackendState::Queued));
+        let service = service(repository, backend.clone());
+        let submitted = service
+            .submit(
+                SourceAudioId::parse("source-1").unwrap(),
+                TranscriptionOptions::default(),
+            )
+            .await
+            .unwrap();
+        *backend.delete_backend_id.lock().unwrap() =
+            Some(BackendOperationId::parse("different-backend").unwrap());
+
+        let rejected = service
+            .cancel(submitted.operation.id().clone())
+            .await
+            .unwrap();
+        assert_eq!(rejected.operation.phase(), OperationPhase::CleanupPending);
+        assert!(rejected.operation.cancel_requested());
+        assert_eq!(
+            rejected.operation.cleanup_failure().unwrap().code,
+            "BACKEND_IDENTITY_MISMATCH"
+        );
+        assert_eq!(
+            rejected.operation.backend_request_id().unwrap().to_string(),
+            "delete-request"
+        );
+        assert_eq!(rejected.operation.cleanup_attempts(), 1);
+
+        let automatic = service
+            .retry_automatically(rejected.operation.id().clone())
+            .await
+            .unwrap();
+        assert_eq!(automatic.operation, rejected.operation);
+        *backend.delete_backend_id.lock().unwrap() = None;
+        let reconciled = service
+            .retry(rejected.operation.id().clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            reconciled.operation.terminal_winner(),
+            Some(TerminalWinner::Cancelled)
+        );
+        assert_eq!(
+            reconciled.operation.cleanup(),
+            &CleanupDisposition::Completed
+        );
+        assert_eq!(
+            backend.calls.lock().unwrap().as_slice(),
+            ["create", "delete", "delete"]
+        );
+    });
+}
+
+#[test]
+fn automatic_cancellation_cleanup_is_bounded_but_user_retry_starts_a_new_cycle() {
+    block_on(async {
+        let repository = Arc::new(MemoryRepository::default());
+        let backend = Arc::new(Backend::new(BackendState::Queued));
+        let service = service(repository, backend.clone());
+        let submitted = service
+            .submit(
+                SourceAudioId::parse("source-1").unwrap(),
+                TranscriptionOptions::default(),
+            )
+            .await
+            .unwrap();
+        let failure =
+            || Failure::new("BACKEND_UNAVAILABLE", FailureCategory::Retryable, Some(0)).unwrap();
+        *backend.delete_failure.lock().unwrap() = Some(failure());
+        let mut pending = service
+            .cancel(submitted.operation.id().clone())
+            .await
+            .unwrap();
+        for _ in 1..CLEANUP_AUTOMATIC_ATTEMPT_LIMIT {
+            *backend.delete_failure.lock().unwrap() = Some(failure());
+            pending = service
+                .retry_automatically(pending.operation.id().clone())
+                .await
+                .unwrap();
+        }
+        assert_eq!(
+            pending.operation.cleanup_attempts(),
+            CLEANUP_AUTOMATIC_ATTEMPT_LIMIT
+        );
+        assert_eq!(backend.calls.lock().unwrap().len(), 6);
+
+        *backend.delete_failure.lock().unwrap() = Some(failure());
+        let bounded = service
+            .retry_automatically(pending.operation.id().clone())
+            .await
+            .unwrap();
+        assert_eq!(bounded.operation, pending.operation);
+        assert_eq!(backend.calls.lock().unwrap().len(), 6);
+
+        let user_retried = service.retry(pending.operation.id().clone()).await.unwrap();
+        assert_eq!(user_retried.operation.cleanup_attempts(), 1);
+        assert_eq!(backend.calls.lock().unwrap().len(), 7);
     });
 }
 
@@ -715,7 +829,10 @@ fn remote_cancel_persists_intent_and_preserves_completion_winner() {
             pending.operation.retry().unwrap().earliest_retry_at_ms,
             1_100
         );
-        let waiting = service.retry(pending.operation.id().clone()).await.unwrap();
+        let waiting = service
+            .retry_automatically(pending.operation.id().clone())
+            .await
+            .unwrap();
         assert_eq!(waiting.operation.phase(), OperationPhase::CleanupPending);
         assert_eq!(
             backend.calls.lock().unwrap().as_slice(),
@@ -723,7 +840,10 @@ fn remote_cancel_persists_intent_and_preserves_completion_winner() {
         );
 
         clock.0.store(1_100, Ordering::SeqCst);
-        let cancelled = service.retry(waiting.operation.id().clone()).await.unwrap();
+        let cancelled = service
+            .retry_automatically(waiting.operation.id().clone())
+            .await
+            .unwrap();
         assert_eq!(
             cancelled.operation.terminal_winner(),
             Some(TerminalWinner::Cancelled)

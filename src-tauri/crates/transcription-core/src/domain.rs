@@ -333,6 +333,12 @@ pub struct RetryMetadata {
 pub const CLEANUP_AUTOMATIC_ATTEMPT_LIMIT: u32 = 5;
 const TRANSCRIPTION_ATTEMPT_LIMIT: u32 = 5;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CleanupRetryMode {
+    Automatic,
+    UserInitiated,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UploadObservation {
@@ -762,20 +768,40 @@ impl TranscriptionOperation {
         self.cleanup_failure = Some(failure);
     }
 
-    pub fn cleanup_retry_ready(&self, now_ms: u64) -> bool {
+    pub fn user_cleanup_retry_ready(&self, now_ms: u64) -> bool {
         match (&self.cleanup_failure, &self.retry) {
             (None, Some(retry)) => now_ms >= retry.earliest_retry_at_ms,
             (None, None) => true,
             (Some(_), Some(retry)) => now_ms >= retry.earliest_retry_at_ms,
-            (Some(_), None) => false,
+            (Some(_), None) => true,
         }
     }
 
     pub fn automatic_cleanup_retry_ready(&self, now_ms: u64) -> bool {
-        self.cleanup_retry_ready(now_ms) && self.cleanup_attempts < CLEANUP_AUTOMATIC_ATTEMPT_LIMIT
+        self.cleanup_failure.as_ref().is_none_or(|failure| {
+            matches!(
+                failure.category,
+                FailureCategory::Retryable | FailureCategory::Uncertain
+            )
+        }) && self
+            .retry
+            .as_ref()
+            .is_none_or(|retry| now_ms >= retry.earliest_retry_at_ms)
+            && self.cleanup_attempts < CLEANUP_AUTOMATIC_ATTEMPT_LIMIT
     }
 
-    pub fn prepare_user_cleanup_attempt(&mut self, now_ms: u64) -> Result<(), DomainError> {
+    pub fn cleanup_retry_ready(&self, mode: CleanupRetryMode, now_ms: u64) -> bool {
+        match mode {
+            CleanupRetryMode::Automatic => self.automatic_cleanup_retry_ready(now_ms),
+            CleanupRetryMode::UserInitiated => self.user_cleanup_retry_ready(now_ms),
+        }
+    }
+
+    pub fn prepare_cleanup_attempt(
+        &mut self,
+        mode: CleanupRetryMode,
+        now_ms: u64,
+    ) -> Result<(), DomainError> {
         if !matches!(
             self.phase,
             OperationPhase::Cancelling
@@ -785,10 +811,12 @@ impl TranscriptionOperation {
         {
             return Err(DomainError::InvalidTransition);
         }
-        if !self.cleanup_retry_ready(now_ms) {
+        if !self.cleanup_retry_ready(mode, now_ms) {
             return Err(DomainError::RetryNotReady);
         }
-        if self.cleanup_attempts >= CLEANUP_AUTOMATIC_ATTEMPT_LIMIT {
+        if mode == CleanupRetryMode::UserInitiated
+            && self.cleanup_attempts >= CLEANUP_AUTOMATIC_ATTEMPT_LIMIT
+        {
             self.cleanup_attempts = 0;
         }
         self.cleanup_attempts += 1;

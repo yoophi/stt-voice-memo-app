@@ -88,7 +88,7 @@ not persist it or commit it as fixture data.
 | ------------------------------------------------ | ------- | ------------------------------------------------ |
 | Issue #5 artifact/architecture contract          | Pass    | Vitest: 6/6                                      |
 | Backend API and journey contract regressions     | Pass    | Full Vitest: 43/43                               |
-| Transcription core state/use-case/recovery tests | Pass    | Core: 20/20; workspace suite passed              |
+| Transcription core state/use-case/recovery tests | Pass    | Core: 22/22; workspace suite passed              |
 | HTTP multipart/status/delete contract tests      | Pass    | Loopback target: 13/13                           |
 | Content-safety canary tests                      | Pass    | DTO, event, error, and persisted-record checks   |
 | TypeScript build, lint, and formatting           | Pass    | `tsc`, ESLint, targeted Prettier                 |

@@ -5,11 +5,11 @@ use thiserror::Error;
 
 use crate::{
     AuthorizationError, AuthorizationPort, BackendOperation, BackendOperationRequest, BackendState,
-    Clock, ConnectivityPort, CreateTranscriptionRequest, DomainError, Failure, FailureCategory,
-    FinalTranscript, OperationEvent, OperationEventSink, OperationPhase, OperationRepository,
-    RepositoryError, SourceAudioError, SourceAudioId, SourceAudioPort, SubmissionFingerprint,
-    TranscriptionOperation, TranscriptionOperationId, TranscriptionOptions, TranscriptionPort,
-    TranscriptionPortError, UploadObservation, UploadProgressSink,
+    CleanupRetryMode, Clock, ConnectivityPort, CreateTranscriptionRequest, DomainError, Failure,
+    FailureCategory, FinalTranscript, OperationEvent, OperationEventSink, OperationPhase,
+    OperationRepository, RepositoryError, SourceAudioError, SourceAudioId, SourceAudioPort,
+    SubmissionFingerprint, TranscriptionOperation, TranscriptionOperationId, TranscriptionOptions,
+    TranscriptionPort, TranscriptionPortError, UploadObservation, UploadProgressSink,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -150,16 +150,44 @@ impl TranscriptionService {
         &self,
         operation_id: TranscriptionOperationId,
     ) -> Result<OperationOutcome, ApplicationError> {
+        self.retry_with_mode(operation_id, CleanupRetryMode::UserInitiated)
+            .await
+    }
+
+    pub async fn retry_automatically(
+        &self,
+        operation_id: TranscriptionOperationId,
+    ) -> Result<OperationOutcome, ApplicationError> {
+        self.retry_with_mode(operation_id, CleanupRetryMode::Automatic)
+            .await
+    }
+
+    async fn retry_with_mode(
+        &self,
+        operation_id: TranscriptionOperationId,
+        cleanup_mode: CleanupRetryMode,
+    ) -> Result<OperationOutcome, ApplicationError> {
         let mut current = self.operations.load(&operation_id).await?;
+        if cleanup_mode == CleanupRetryMode::Automatic
+            && !matches!(
+                current.phase(),
+                OperationPhase::RetryableFailure
+                    | OperationPhase::Cancelling
+                    | OperationPhase::CleanupPending
+                    | OperationPhase::TerminalFailure
+            )
+        {
+            return Ok(OperationOutcome::operation(current));
+        }
         match current.phase() {
             OperationPhase::TerminalFailure
                 if current.cleanup().is_unresolved()
                     && current.backend_operation_id().is_some() =>
             {
-                if !current.cleanup_retry_ready(self.clock.now_ms()) {
+                if !current.cleanup_retry_ready(cleanup_mode, self.clock.now_ms()) {
                     return Ok(OperationOutcome::operation(current));
                 }
-                return self.dispatch_terminal_cleanup(current).await;
+                return self.dispatch_terminal_cleanup(current, cleanup_mode).await;
             }
             OperationPhase::Completed
             | OperationPhase::Cancelled
@@ -178,10 +206,10 @@ impl TranscriptionService {
             OperationPhase::Cancelling | OperationPhase::CleanupPending
                 if current.backend_operation_id().is_some() =>
             {
-                if !current.cleanup_retry_ready(self.clock.now_ms()) {
+                if !current.cleanup_retry_ready(cleanup_mode, self.clock.now_ms()) {
                     return Ok(OperationOutcome::operation(current));
                 }
-                return self.dispatch_delete(current).await;
+                return self.dispatch_delete(current, cleanup_mode).await;
             }
             OperationPhase::Uploading => {
                 debug_assert!(current.recover_interrupted_upload());
@@ -211,10 +239,14 @@ impl TranscriptionService {
             OperationPhase::Cancelling | OperationPhase::CleanupPending
                 if current.backend_operation_id().is_some() =>
             {
-                if !current.cleanup_retry_ready(self.clock.now_ms()) {
+                if !current
+                    .cleanup_retry_ready(CleanupRetryMode::UserInitiated, self.clock.now_ms())
+                {
                     return Ok(OperationOutcome::operation(current));
                 }
-                return self.dispatch_delete(current).await;
+                return self
+                    .dispatch_delete(current, CleanupRetryMode::UserInitiated)
+                    .await;
             }
             _ => {}
         }
@@ -241,7 +273,8 @@ impl TranscriptionService {
         if cancelling.terminal_winner().is_some() {
             return Err(ApplicationError::TerminalConflict);
         }
-        self.dispatch_delete(cancelling).await
+        self.dispatch_delete(cancelling, CleanupRetryMode::UserInitiated)
+            .await
     }
 
     pub async fn recover(&self) -> Result<Vec<OperationOutcome>, ApplicationError> {
@@ -333,6 +366,7 @@ impl TranscriptionService {
     async fn dispatch_delete(
         &self,
         mut operation: TranscriptionOperation,
+        cleanup_mode: CleanupRetryMode,
     ) -> Result<OperationOutcome, ApplicationError> {
         let backend_operation_id = operation
             .backend_operation_id()
@@ -353,19 +387,59 @@ impl TranscriptionService {
                 return Err(ApplicationError::Authorization(error));
             }
         };
-        operation.prepare_user_cleanup_attempt(self.clock.now_ms())?;
+        operation.prepare_cleanup_attempt(cleanup_mode, self.clock.now_ms())?;
         operation = self.commit(operation).await?;
         match self
             .backend
             .delete(BackendOperationRequest {
                 operation_id: operation.id().clone(),
-                backend_operation_id,
+                backend_operation_id: backend_operation_id.clone(),
                 source_audio_id: operation.source_audio_id().clone(),
                 authorization,
             })
             .await
         {
-            Ok(remote) => self.apply_backend(operation, remote).await,
+            Ok(remote) => {
+                if remote.id != backend_operation_id
+                    || remote.source_audio_id != *operation.source_audio_id()
+                {
+                    return self
+                        .record_cancel_cleanup_contract_failure(
+                            operation,
+                            "BACKEND_IDENTITY_MISMATCH",
+                            remote.request_id,
+                        )
+                        .await;
+                }
+                if !matches!(
+                    remote.state,
+                    BackendState::Cancelled | BackendState::Deleting | BackendState::Deleted
+                ) {
+                    return self
+                        .record_cancel_cleanup_contract_failure(
+                            operation,
+                            "MALFORMED_BACKEND_RESPONSE",
+                            remote.request_id,
+                        )
+                        .await;
+                }
+                let Some(request_id) = remote.request_id else {
+                    return self
+                        .record_cancel_cleanup_contract_failure(
+                            operation,
+                            "MALFORMED_BACKEND_RESPONSE",
+                            None,
+                        )
+                        .await;
+                };
+                operation.confirm_cancel(
+                    remote.cleanup,
+                    request_id,
+                    self.clock.now_ms(),
+                    remote.poll_after_ms,
+                )?;
+                Ok(OperationOutcome::operation(self.commit(operation).await?))
+            }
             Err(error) => {
                 operation.mark_cleanup_uncertain(error.failure, self.clock.now_ms())?;
                 let operation = self.commit(operation).await?;
@@ -374,9 +448,24 @@ impl TranscriptionService {
         }
     }
 
+    async fn record_cancel_cleanup_contract_failure(
+        &self,
+        mut operation: TranscriptionOperation,
+        code: &'static str,
+        request_id: Option<crate::BackendRequestId>,
+    ) -> Result<OperationOutcome, ApplicationError> {
+        let mut failure = Failure::new(code, FailureCategory::Terminal, None)?;
+        if let Some(request_id) = request_id {
+            failure = failure.with_request_id(request_id);
+        }
+        operation.mark_cleanup_uncertain(failure, self.clock.now_ms())?;
+        Ok(OperationOutcome::operation(self.commit(operation).await?))
+    }
+
     async fn dispatch_terminal_cleanup(
         &self,
         mut operation: TranscriptionOperation,
+        cleanup_mode: CleanupRetryMode,
     ) -> Result<OperationOutcome, ApplicationError> {
         let backend_operation_id = operation
             .backend_operation_id()
@@ -397,7 +486,7 @@ impl TranscriptionService {
                 return Err(ApplicationError::Authorization(error));
             }
         };
-        operation.prepare_user_cleanup_attempt(self.clock.now_ms())?;
+        operation.prepare_cleanup_attempt(cleanup_mode, self.clock.now_ms())?;
         operation = self.commit(operation).await?;
         let remote = match self
             .backend
@@ -555,7 +644,7 @@ impl TranscriptionService {
             )?;
             operation.begin_cancel()?;
             let operation = self.commit(operation).await?;
-            return Box::pin(self.dispatch_delete(operation)).await;
+            return Box::pin(self.dispatch_delete(operation, CleanupRetryMode::Automatic)).await;
         }
 
         let transcript_candidate = match remote.state {

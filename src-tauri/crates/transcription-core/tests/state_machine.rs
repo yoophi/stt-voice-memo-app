@@ -1,7 +1,8 @@
 use transcription_core::{
-    BackendOperationId, CleanupDisposition, DomainError, Failure, FailureCategory, FinalTranscript,
-    OperationPhase, SourceAudioId, SourceDescriptor, SubmissionFingerprint, TranscriptionOperation,
-    TranscriptionOperationId, TranscriptionOptions, UploadObservation,
+    BackendOperationId, CleanupDisposition, CleanupRetryMode, DomainError, Failure,
+    FailureCategory, FinalTranscript, OperationPhase, SourceAudioId, SourceDescriptor,
+    SubmissionFingerprint, TranscriptionOperation, TranscriptionOperationId, TranscriptionOptions,
+    UploadObservation,
 };
 
 fn operation() -> TranscriptionOperation {
@@ -94,7 +95,9 @@ fn first_terminal_winner_is_immutable_and_cleanup_is_orthogonal() {
     );
 
     for attempt in 1..=5 {
-        aggregate.prepare_user_cleanup_attempt(100).unwrap();
+        aggregate
+            .prepare_cleanup_attempt(CleanupRetryMode::Automatic, 100)
+            .unwrap();
         aggregate
             .record_terminal_cleanup_failure(
                 Failure::new("BACKEND_UNAVAILABLE", FailureCategory::Retryable, Some(0)).unwrap(),
@@ -104,7 +107,9 @@ fn first_terminal_winner_is_immutable_and_cleanup_is_orthogonal() {
         assert_eq!(aggregate.cleanup_attempts(), attempt);
     }
     assert!(!aggregate.automatic_cleanup_retry_ready(100));
-    aggregate.prepare_user_cleanup_attempt(100).unwrap();
+    aggregate
+        .prepare_cleanup_attempt(CleanupRetryMode::UserInitiated, 100)
+        .unwrap();
     assert_eq!(aggregate.cleanup_attempts(), 1);
 
     let mut non_retryable = operation();
@@ -113,7 +118,9 @@ fn first_terminal_winner_is_immutable_and_cleanup_is_orthogonal() {
         .fail_terminal(Failure::new("MALFORMED_RESPONSE", FailureCategory::Terminal, None).unwrap())
         .unwrap();
     non_retryable.set_cleanup(CleanupDisposition::FailedRetrying { delete_by_ms: 500 });
-    non_retryable.prepare_user_cleanup_attempt(100).unwrap();
+    non_retryable
+        .prepare_cleanup_attempt(CleanupRetryMode::Automatic, 100)
+        .unwrap();
     non_retryable
         .record_terminal_cleanup_failure(
             Failure::new("INVALID_DELETE_RESPONSE", FailureCategory::Terminal, None).unwrap(),
@@ -121,5 +128,9 @@ fn first_terminal_winner_is_immutable_and_cleanup_is_orthogonal() {
         )
         .unwrap();
     assert!(non_retryable.retry().is_none());
-    assert!(!non_retryable.cleanup_retry_ready(100));
+    assert!(!non_retryable.automatic_cleanup_retry_ready(100));
+    assert!(non_retryable.user_cleanup_retry_ready(100));
+    non_retryable
+        .prepare_cleanup_attempt(CleanupRetryMode::UserInitiated, 100)
+        .unwrap();
 }
