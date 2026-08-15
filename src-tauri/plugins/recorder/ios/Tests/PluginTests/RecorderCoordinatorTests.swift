@@ -204,6 +204,37 @@ final class RecorderCoordinatorTests: XCTestCase {
         }
     }
 
+    func testRepeatedCancelRetriesStartFailureCleanupUntilRemoval() async throws {
+        let files = FakeRecordingFiles(cleanupResults: [.pending, .removed])
+        let coordinator = RecorderCoordinator(
+            audioSession: FakeAudioSession(permission: .granted),
+            recorderFactory: FakeRecorderFactory(
+                capture: FakeCapture(),
+                creationFails: true
+            ),
+            files: files,
+            notifications: NotificationCenter()
+        )
+
+        do {
+            _ = try await coordinator.start(sessionId: Self.sessionId)
+            XCTFail("start should fail with pending cleanup")
+        } catch let error as RecorderPluginError {
+            XCTAssertEqual(error.code, .recorderFailure)
+            XCTAssertTrue(error.retryable)
+            XCTAssertEqual(error.cleanup, .pending)
+        }
+
+        let failedStatus = try coordinator.status(sessionId: Self.sessionId)
+        let cleanup = try coordinator.cancel(sessionId: Self.sessionId)
+        let cancelledStatus = try coordinator.status(sessionId: Self.sessionId)
+
+        XCTAssertEqual(failedStatus.state, .failed)
+        XCTAssertEqual(cleanup, .removed)
+        XCTAssertEqual(cancelledStatus.state, .cancelled)
+        XCTAssertEqual(files.removeCount, 2)
+    }
+
     func testInterruptionWinsRaceWithUserStopAndEmitsOneTerminalEvent() async throws {
         var events: [RecorderEvent] = []
         let audioSession = FakeAudioSession(permission: .granted)

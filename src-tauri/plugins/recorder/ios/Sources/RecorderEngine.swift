@@ -344,11 +344,16 @@ final class RecorderCoordinator {
             return result
         } catch let error as RecorderPluginError {
             audioSession.deactivate()
-            throw startFailure(error, afterRemoving: destination)
+            throw startFailure(
+                error,
+                sessionId: sessionId,
+                afterRemoving: destination
+            )
         } catch {
             audioSession.deactivate()
             throw startFailure(
                 RecorderPluginError(code: .recorderFailure, retryable: true),
+                sessionId: sessionId,
                 afterRemoving: destination
             )
         }
@@ -356,11 +361,19 @@ final class RecorderCoordinator {
 
     private func startFailure(
         _ error: RecorderPluginError,
+        sessionId: String,
         afterRemoving destination: URL
     ) -> RecorderPluginError {
         let cleanup = files.remove(url: destination)
         guard cleanup == .pending || cleanup == .failed else { return error }
-        return RecorderPluginError(code: error.code, retryable: true, cleanup: cleanup)
+        let recoverableError = RecorderPluginError(
+            code: error.code,
+            retryable: true,
+            cleanup: cleanup
+        )
+        terminals[sessionId] = .cleanupPending(recoverableError, destination)
+        emit(sessionId: sessionId, state: .failed, cleanup: cleanup)
+        return recoverableError
     }
 
     func pause(sessionId: String) throws -> RecordingSession {

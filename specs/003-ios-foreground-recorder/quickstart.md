@@ -124,9 +124,9 @@ regression has passed.
 
 - Relevant Prettier files, ESLint, TypeScript build, and all 12 frontend tests
   passed.
-- Rust formatting, all 17 workspace tests, and workspace clippy passed. The
+- Rust formatting, all 18 workspace tests, and workspace clippy passed. The
   vendored `swift-rs` dependency emitted two non-fatal upstream warnings.
-- All 12 Swift coordinator tests passed on the connected iOS simulator,
+- All 13 Swift coordinator tests passed on the connected iOS simulator,
   including start-failure cleanup and explicit cleanup retry coverage.
 - Rust compiled for both `aarch64-apple-ios-sim` and `aarch64-apple-ios` with
   `IPHONEOS_DEPLOYMENT_TARGET=15.0`.

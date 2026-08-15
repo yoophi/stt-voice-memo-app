@@ -180,8 +180,7 @@ impl<P: RecorderPort> RecorderService<P> {
     }
 
     fn cleanup_retryable(error: &RecorderError) -> bool {
-        error.code == RecorderErrorCode::CleanupFailure
-            && error.retryable
+        error.retryable
             && matches!(
                 error.cleanup,
                 Some(CleanupOutcome::Pending | CleanupOutcome::Failed)

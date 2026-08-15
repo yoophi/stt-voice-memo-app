@@ -16,6 +16,7 @@ mod tests {
     struct FakeRecorder {
         calls: Vec<&'static str>,
         status_results: VecDeque<RecordingSession>,
+        start_results: VecDeque<Result<RecordingSession, RecorderError>>,
         stop_results: VecDeque<Result<FinalizedRecording, RecorderError>>,
         cleanup_results: VecDeque<Result<CleanupOutcome, RecorderError>>,
         cleanup_result: Option<Result<CleanupOutcome, RecorderError>>,
@@ -51,7 +52,9 @@ mod tests {
             session_id: &RecordingSessionId,
         ) -> Result<RecordingSession, RecorderError> {
             self.calls.push("start");
-            Ok(RecordingSession::recording(session_id.clone()))
+            self.start_results
+                .pop_front()
+                .unwrap_or_else(|| Ok(RecordingSession::recording(session_id.clone())))
         }
 
         fn pause(
@@ -211,6 +214,27 @@ mod tests {
 
         assert_eq!(error.code, RecorderErrorCode::InvalidTransition);
         assert_eq!(service.port().calls, vec!["start", "status"]);
+    }
+
+    #[test]
+    fn cancel_retries_cleanup_reported_by_a_failed_start() {
+        let session_id = id("550e8400-e29b-41d4-a716-446655440000");
+        let mut fake = FakeRecorder::default();
+        fake.start_results.push_back(Err(RecorderError::new(
+            RecorderErrorCode::RecorderFailure,
+            Some(session_id.clone()),
+            true,
+        )
+        .with_cleanup(CleanupOutcome::Pending)));
+        let mut service = RecorderService::new(fake);
+
+        let start_error = service.start(session_id.clone()).unwrap_err();
+        let cleanup = service.cancel(&session_id).unwrap();
+
+        assert_eq!(start_error.code, RecorderErrorCode::RecorderFailure);
+        assert_eq!(start_error.cleanup, Some(CleanupOutcome::Pending));
+        assert_eq!(cleanup, CleanupOutcome::Removed);
+        assert_eq!(service.port().calls, vec!["start", "cancel"]);
     }
 
     #[test]
