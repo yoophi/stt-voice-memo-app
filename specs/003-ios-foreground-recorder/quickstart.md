@@ -122,12 +122,14 @@ regression has passed.
 
 ## Validation result (2026-08-15)
 
-- Relevant Prettier files, ESLint, TypeScript build, and all 12 frontend tests
+- Validated implementation commit: `a5a8a45`.
+- Relevant Prettier files, ESLint, TypeScript build, and all 37 frontend tests
   passed.
-- Rust formatting, all 18 workspace tests, and workspace clippy passed. The
+- Rust formatting, all 23 workspace tests (recorder core 19, plugin boundary 4),
+  and workspace clippy passed. The
   vendored `swift-rs` dependency emitted two non-fatal upstream warnings.
-- All 14 Swift coordinator tests passed on the connected iOS simulator,
-  including start/finalization-failure cleanup and explicit cleanup retry coverage.
+- All 17 Swift coordinator tests passed on the connected iOS simulator,
+  including first-terminal-wins and start/finalization cleanup retry coverage.
 - Rust compiled for both `aarch64-apple-ios-sim` and `aarch64-apple-ios` with
   `IPHONEOS_DEPLOYMENT_TARGET=15.0`.
 - The recorder plugin compiled for `aarch64-linux-android`; Android startup uses

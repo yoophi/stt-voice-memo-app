@@ -6,7 +6,7 @@
 
 - Device model: Unavailable (only an iPhone 17 Pro simulator was connected)
 - iOS version: Unavailable
-- Build commit: `64e1d22` base plus the Issue #4 working tree
+- Build commit: `a5a8a45`
 - Date: 2026-08-15
 - Tester: Codex automated validation; physical tester pending
 
@@ -34,10 +34,10 @@ or credentials in this document or its linked evidence.
 
 | Check                          | Status  | Evidence / notes                                |
 | ------------------------------ | ------- | ----------------------------------------------- |
-| Rust workspace tests           | Passed  | 18 tests: recorder core 14, plugin boundary 4   |
+| Rust workspace tests           | Passed  | 23 tests: recorder core 19, plugin boundary 4   |
 | Rust clippy and formatting     | Passed  | Workspace clean; vendored `swift-rs` warns only |
-| TypeScript tests/build/lint    | Passed  | 12 tests, TypeScript build, and ESLint passed   |
-| Swift coordinator tests        | Passed  | 14 tests on the connected iOS simulator         |
+| TypeScript tests/build/lint    | Passed  | 37 tests, TypeScript build, and ESLint passed   |
+| Swift coordinator tests        | Passed  | 17 tests on the connected iOS simulator         |
 | iOS simulator target compile   | Passed  | Rust/Swift plugin compiled for iOS simulator    |
 | Android Rust plugin compile    | Passed  | Safe unsupported adapter compiled for arm64     |
 | Physical Android app startup   | Not run | `adb` unavailable; physical API 24+ required    |
