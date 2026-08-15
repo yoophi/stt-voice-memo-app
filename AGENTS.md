@@ -32,11 +32,11 @@
 
 ## Current Feature
 
-- Plan: `specs/003-backend-transcription-api/plan.md`
-- Specification: `specs/003-backend-transcription-api/spec.md`
-- Scope: the authenticated, asynchronous, idempotent, versioned transcription
-  API contract and no-network contract tests. Production backend, provider calls,
-  native recording, Rust integration, and mobile UI remain deferred.
+- Plan: `specs/002-record-transcribe-journey/plan.md`
+- Specification: `specs/002-record-transcribe-journey/spec.md`
+- Scope: the canonical foreground mobile recording-to-memo behavior, state,
+  privacy, adapter-boundary, and physical-device validation contracts consumed by
+  Issues #3 through #7. Runtime recording remains deferred to those issues.
 
 ## References
 

@@ -1,0 +1,11 @@
+[package]
+name = "recorder-core"
+version = "0.1.0"
+description = "Platform-neutral foreground recorder domain and application contracts"
+edition = "2024"
+rust-version = "1.85"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+uuid = { version = "1", features = ["serde", "v4"] }

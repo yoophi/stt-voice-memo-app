@@ -1,7 +1,17 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Allows only Tauri core defaults for the application shell",
+  "description": "Allows Tauri core defaults and the foreground recorder command surface",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    "recorder:allow-permission-status",
+    "recorder:allow-request-permission",
+    "recorder:allow-recorder-status",
+    "recorder:allow-start",
+    "recorder:allow-pause",
+    "recorder:allow-resume",
+    "recorder:allow-stop",
+    "recorder:allow-cancel"
+  ]
 }
