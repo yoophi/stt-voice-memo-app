@@ -1,0 +1,147 @@
+name: Validate workspace
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      mobile: ${{ steps.scopes.outputs.mobile }}
+      backend: ${{ steps.scopes.outputs.backend }}
+      contract: ${{ steps.scopes.outputs.contract }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - id: scopes
+        name: Select affected scopes
+        shell: bash
+        run: |
+          base="${{ github.event.pull_request.base.sha || github.event.before }}"
+          if [[ -z "$base" || "$base" =~ ^0+$ ]]; then
+            base="$(git rev-list --max-parents=0 HEAD)"
+          fi
+          git diff --name-status -z "$base" "${{ github.sha }}" \
+            | node scripts/workspace/select-scopes.mjs --name-status0 --github-output "$GITHUB_OUTPUT"
+
+  contract:
+    needs: changes
+    if: needs.changes.outputs.contract == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.0.9
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.22.0
+          cache: pnpm
+      - uses: actions/cache@v4
+        with:
+          path: .cache/contracts
+          key: scope-contract-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'contracts/**', 'scripts/backend-transcription-api-contract.test.mjs', 'scripts/workspace/**') }}
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm validate:contract
+
+  backend:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.0.9
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.22.0
+          cache: pnpm
+      - uses: actions/cache@v4
+        with:
+          path: target
+          key: scope-backend-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'apps/backend/**', 'contracts/**') }}
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm validate:backend
+
+  mobile:
+    needs: changes
+    if: needs.changes.outputs.mobile == 'true'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.0.9
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.22.0
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+      - uses: actions/cache@v4
+        with:
+          path: target
+          key: scope-mobile-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'src-tauri/**', 'pnpm-lock.yaml') }}
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm validate:mobile
+
+  aggregate:
+    needs: [changes, mobile, backend, contract]
+    if: always() && github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every selected job to pass
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          MOBILE_SELECTED: ${{ needs.changes.outputs.mobile }}
+          MOBILE_RESULT: ${{ needs.mobile.result }}
+          BACKEND_SELECTED: ${{ needs.changes.outputs.backend }}
+          BACKEND_RESULT: ${{ needs.backend.result }}
+          CONTRACT_SELECTED: ${{ needs.changes.outputs.contract }}
+          CONTRACT_RESULT: ${{ needs.contract.result }}
+        shell: bash
+        run: |
+          if [[ "$CHANGES_RESULT" != "success" ]]; then
+            echo "scope selection failed" >&2
+            exit 1
+          fi
+          for scope in MOBILE BACKEND CONTRACT; do
+            selected_name="${scope}_SELECTED"
+            result_name="${scope}_RESULT"
+            if [[ "${!selected_name}" == "true" && "${!result_name}" != "success" ]]; then
+              echo "selected scope failed: ${scope,,}" >&2
+              exit 1
+            fi
+          done
+
+  full:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.0.9
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.22.0
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+      - uses: actions/cache@v4
+        with:
+          path: target
+          key: scope-full-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'src-tauri/**', 'apps/backend/**', 'contracts/**', 'pnpm-lock.yaml') }}
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm validate

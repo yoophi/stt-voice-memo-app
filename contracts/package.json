@@ -1,0 +1,15 @@
+{
+  "name": "@stt-voice-memo/contracts",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "node ../scripts/workspace/contract-artifacts.mjs --check",
+    "test": "pnpm --dir .. exec vitest run scripts/backend-transcription-api-contract.test.mjs",
+    "lint": "node ../scripts/workspace/contract-artifacts.mjs --check",
+    "format": "pnpm --dir .. exec prettier --check contracts"
+  },
+  "exports": {
+    "./transcription-api/v1/openapi.json": "./transcription-api/v1/openapi.json"
+  }
+}

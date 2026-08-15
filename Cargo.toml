@@ -1,0 +1,14 @@
+[workspace]
+members = [
+  "src-tauri",
+  "src-tauri/crates/recorder-core",
+  "src-tauri/crates/transcription-core",
+  "src-tauri/plugins/recorder",
+]
+resolver = "3"
+
+# swift-rs 1.0.7 passes only `--arch` to SwiftPM. Xcode 27 then selects the
+# macOS SDK before compiler-level iOS overrides conflict with it. Keep this
+# repository-local patch until upstream supports SwiftPM target `--triple`.
+[patch.crates-io]
+swift-rs = { path = "src-tauri/vendor/swift-rs" }

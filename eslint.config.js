@@ -11,6 +11,8 @@ export default tseslint.config(
       "dist/**",
       "build/**",
       "coverage/**",
+      "scripts/workspace/fixtures/**",
+      "target/**",
       "src-tauri/target/**",
       "src-tauri/gen/**",
       "*.min.js",

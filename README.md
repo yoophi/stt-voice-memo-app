@@ -54,6 +54,24 @@ OpenAI API 키는 Tauri 데스크톱 또는 모바일 번들에 포함하지 않
 
 ## 아키텍처
 
+### 모노레포 워크스페이스
+
+루트 모바일 패키지와 `src-tauri` 경로는 기존 위치를 유지합니다. 향후 백엔드
+모듈은 `apps/backend`, 단일 전사 계약은 `contracts`가 소유하며, 저장소 루트의
+pnpm 및 Cargo 워크스페이스에서 함께 검증합니다. 모바일과 백엔드는 계약을
+소비할 수 있지만 서로의 런타임 모듈을 import하지 않습니다.
+
+```text
+./                 모바일 React 패키지와 루트 명령
+src-tauri/         모바일 Rust/Tauri 및 네이티브 프로젝트
+apps/backend/      백엔드 모듈과 어댑터의 예약 영역
+contracts/         canonical transcription OpenAPI
+scripts/workspace/ 경계·drift·secret·CI scope 검증
+```
+
+구체적인 소유권, 의존 방향, 백엔드 모듈/어댑터 추가 절차는
+[`docs/monorepo-workspace.md`](docs/monorepo-workspace.md)를 따릅니다.
+
 ### Rust: Hexagonal Architecture
 
 Rust 영역은 도메인과 유스케이스가 Tauri, 운영체제, 파일 시스템, 데이터베이스 및 외부 API 구현에 직접 의존하지 않도록 구성합니다.
@@ -147,7 +165,27 @@ Handy는 로컬 음성 인식 중심의 데스크톱 애플리케이션인 반�
 - [`docs/tauri-mobile-voice-memo.md`](docs/tauri-mobile-voice-memo.md): Tauri 모바일 녹음과 GPT Transcribe 연동 검토
 - [`docs/handy-mobile-code-reuse.md`](docs/handy-mobile-code-reuse.md): Handy 오디오 처리 코드의 모바일 재사용 가능성 분석
 - [`docs/ios-simulator-xcode-27-troubleshooting.md`](docs/ios-simulator-xcode-27-troubleshooting.md): Xcode 27에서 Tauri iOS Simulator 빌드·실행 문제와 해결 기록
+- [`docs/monorepo-workspace.md`](docs/monorepo-workspace.md): 모바일·백엔드·계약 워크스페이스 소유권, 명령, 설정 및 CI 경계
 
 ## 개발 환경
 
-프로젝트 초기 구성이 완료되면 Node.js, Rust 및 플랫폼별 Tauri 필수 도구가 필요합니다. 구체적인 설치와 실행 명령은 애플리케이션 스캐폴딩 이후 이 문서에 추가합니다.
+Node.js 22.22 이상, pnpm 11.0.9, Rust stable 및 대상 플랫폼의 Tauri 필수
+도구가 필요합니다.
+
+```sh
+corepack enable
+pnpm install --frozen-lockfile
+
+pnpm dev:mobile
+pnpm validate:mobile
+pnpm validate:backend
+pnpm validate:contract
+pnpm validate
+```
+
+`pnpm dev:backend`는 후속 이슈가 백엔드 런타임을 구현하기 전까지 명시적인
+unavailable 결과로 종료됩니다. iOS 명령은 저장소 루트에서 `pnpm tauri ios
+...` 형태로 실행합니다. `pnpm tauri android ...` 루트 CLI facade도 이미
+존재하지만 Android 호스트와 build 경로는 아직 unavailable입니다. Issue
+#24가 최소 Android 호스트를 초기화해 이 기존 facade를 실행 가능한 상태로
+만들며, 그 전까지 Android 경로 검사는 unavailable로 보고됩니다.
