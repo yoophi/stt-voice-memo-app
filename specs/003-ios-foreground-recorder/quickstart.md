@@ -122,7 +122,7 @@ regression has passed.
 
 ## Validation result (2026-08-15)
 
-- Validated implementation commit: `a0a679f`.
+- Validated implementation commit: `5f3c876`.
 - Relevant Prettier files, ESLint, TypeScript build, and all 37 frontend tests
   passed.
 - Rust formatting, all 23 workspace tests (recorder core 19, plugin boundary 4),
