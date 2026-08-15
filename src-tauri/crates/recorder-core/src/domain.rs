@@ -471,19 +471,15 @@ impl RecordingLifecycle {
         cleanup: CleanupOutcome,
     ) -> Result<(), RecorderError> {
         self.require_active_or_paused(session_id)?;
-        self.current = Some(RecordingSession {
-            session_id: Some(session_id.clone()),
-            state: RecordingState::Cancelled,
-            started_at_ms: None,
-            duration_ms: 0,
-            terminal_reason: None,
-        });
-        self.terminal
-            .insert(session_id.clone(), TerminalOutcome::Cancelled(cleanup));
+        self.set_cancelled(session_id, cleanup);
         Ok(())
     }
 
     pub fn complete_cancel(&mut self, session_id: &RecordingSessionId, cleanup: CleanupOutcome) {
+        self.set_cancelled(session_id, cleanup);
+    }
+
+    fn set_cancelled(&mut self, session_id: &RecordingSessionId, cleanup: CleanupOutcome) {
         self.current = Some(RecordingSession {
             session_id: Some(session_id.clone()),
             state: RecordingState::Cancelled,
