@@ -8,9 +8,10 @@ credentials, audio, transcript text, private paths, or signing material.
 
 ## Tested revision
 
-- Commit: working tree based on `030950f`
+- Validated implementation commit: `5e4fb92`
 - Date: 2026-08-15
-- Validator: Codex automated validation; physical-device rows remain unverified
+- Validator: Codex automated validation on macOS; no physical iPhone or Android
+  device was connected, so physical-device rows remain unverified
 
 ## Physical iPhone
 
@@ -42,18 +43,18 @@ credentials, audio, transcript text, private paths, or signing material.
 
 ## Automated migration evidence
 
-| Command                                                   | Commit       | Outcome | Notes                                                                                   |
-| --------------------------------------------------------- | ------------ | ------- | --------------------------------------------------------------------------------------- |
-| `pnpm test:workspace`                                     | working tree | Passed  | 19 workspace/path/security tests                                                        |
-| `pnpm validate:contract`                                  | working tree | Passed  | 44 contract/workspace tests; drift current                                              |
-| `pnpm validate:backend`                                   | working tree | Passed  | Scaffold and boundaries only; no runtime claim                                          |
-| `pnpm validate:mobile`                                    | working tree | Passed  | Frontend build/tests/lint, 64 Rust tests, mobile paths and secret scan                  |
-| `pnpm lint:rust`                                          | working tree | Passed  | Workspace/all-target Clippy; vendored `swift-rs` warnings only                          |
-| `pnpm test:swift`                                         | working tree | Passed  | 17 coordinator tests on iOS Simulator; not physical evidence                            |
-| `pnpm tauri ios build --debug --target aarch64 --no-sign` | working tree | Passed  | Unsigned bundle remained under `src-tauri/gen/apple`                                    |
-| `pnpm tauri android build --debug`                        | working tree | Not run | Existing Android project is uninitialized at `src-tauri/gen/android`; `adb` unavailable |
-| `pnpm validate`                                           | working tree | Passed  | Full automated repository validation                                                    |
-| Content/secret/path review                                | working tree | Passed  | Synthetic canaries only; no real secret or mobile source move                           |
+| Command                                                                  | Commit    | Outcome | Notes                                                                                |
+| ------------------------------------------------------------------------ | --------- | ------- | ------------------------------------------------------------------------------------ |
+| `pnpm test:workspace`                                                    | `5e4fb92` | Passed  | 24 workspace/path/security tests                                                     |
+| `pnpm validate:contract`                                                 | `5e4fb92` | Passed  | 49 contract/workspace tests; generated contract current                              |
+| `pnpm validate:backend`                                                  | `5e4fb92` | Passed  | Scaffold and boundaries only; no runtime claim                                       |
+| `pnpm validate:mobile`                                                   | `5e4fb92` | Passed  | 18 frontend tests, boundary check, 64 Rust tests, both mobile paths, and secret scan |
+| `pnpm lint:rust`                                                         | `5e4fb92` | Passed  | Workspace/all-target Clippy; vendored `swift-rs` warnings only                       |
+| Clean checkout: `pnpm install --frozen-lockfile && pnpm test:swift`      | `5e4fb92` | Passed  | Generated ignored Tauri Swift API, then passed 17 simulator tests                    |
+| `pnpm tauri ios build --debug --target aarch64 --no-sign`                | `5e4fb92` | Passed  | Unsigned IPA remained under `src-tauri/gen/apple/build/arm64`                        |
+| `JAVA_HOME=$(/usr/libexec/java_home -v 17) pnpm tauri android build ...` | `5e4fb92` | Passed  | arm64 debug APK remained under `src-tauri/gen/android/app/build/outputs/apk`         |
+| `pnpm validate`                                                          | `5e4fb92` | Passed  | Full automated repository validation                                                 |
+| Content/secret/path review                                               | `5e4fb92` | Passed  | Plain and transformed synthetic canaries only; no real secret or mobile source move  |
 
 ## Completion
 

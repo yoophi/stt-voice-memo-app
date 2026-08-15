@@ -5,7 +5,7 @@
 - Node.js 22.22 or newer and pnpm 11.0.9 via Corepack
 - Rust stable compatible with repository MSRV 1.85
 - Xcode/Swift for Swift and iOS checks
-- Android SDK/JDK for Android project checks
+- Android SDK and a Java 17 JDK for Android project checks
 - Physical iPhone and Android devices plus signing for final device evidence
 
 No backend, OpenAI, storage, queue, auth, or deployment credential is required.
@@ -95,12 +95,14 @@ the host supports them. Any platform-specific omission is printed separately.
 ```sh
 test -d src-tauri/gen/apple/stt-voice-memo-app.xcodeproj
 pnpm tauri ios build --debug --target aarch64 --no-sign
-pnpm tauri android build --debug
+JAVA_HOME=$(/usr/libexec/java_home -v 17) \
+  pnpm tauri android build --debug --target aarch64 --apk --ci
 ```
 
-If the Android project has not yet been generated in the checkout, use the
-documented Tauri initialization command first and record that generated output
-remains under `src-tauri/gen/android`. Do not commit local SDK/signing files.
+The Android host is tracked under `src-tauri/gen/android`; generated APKs,
+native libraries, SDK paths, and signing files remain local build output. On
+non-macOS hosts, set `JAVA_HOME` to the installed Java 17 home using the host's
+equivalent command.
 
 ## 8. Record physical-device evidence
 
