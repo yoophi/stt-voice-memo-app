@@ -334,6 +334,75 @@ fn authentication_required_remains_recoverable_after_token_refresh() {
         authorization.0.store(true, Ordering::SeqCst);
         let retried = service.retry(waiting.operation.id().clone()).await.unwrap();
         assert_eq!(retried.operation.phase(), OperationPhase::Queued);
+
+        authorization.0.store(false, Ordering::SeqCst);
+        let waiting_after_status = service
+            .status(retried.operation.id().clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            waiting_after_status.operation.phase(),
+            OperationPhase::WaitingForAuthorization
+        );
+        authorization.0.store(true, Ordering::SeqCst);
+        assert_eq!(
+            service
+                .retry(waiting_after_status.operation.id().clone())
+                .await
+                .unwrap()
+                .operation
+                .phase(),
+            OperationPhase::Queued
+        );
+    });
+}
+
+#[test]
+fn terminal_failure_can_retry_unresolved_remote_cleanup_without_changing_winner() {
+    block_on(async {
+        let repository = Arc::new(MemoryRepository::default());
+        let backend = Arc::new(Backend::new(BackendState::Queued));
+        let source = SourceDescriptor::new(
+            SourceAudioId::parse("source-1").unwrap(),
+            "audio/mp4",
+            "m4a",
+            128,
+            1_000,
+            "a".repeat(64),
+        )
+        .unwrap();
+        let mut operation = TranscriptionOperation::new(
+            TranscriptionOperationId::parse(LOCAL_ID).unwrap(),
+            source.id.clone(),
+            SubmissionFingerprint::derive(&source, &TranscriptionOptions::default()),
+            TranscriptionOptions::default(),
+        );
+        operation.begin_upload(100).unwrap();
+        operation
+            .observe_backend_active(
+                BackendOperationId::parse("backend-1").unwrap(),
+                OperationPhase::Processing,
+                None,
+                None,
+            )
+            .unwrap();
+        operation
+            .fail_terminal(Failure::new("INVALID_AUDIO", FailureCategory::Terminal, None).unwrap())
+            .unwrap();
+        operation.set_cleanup(CleanupDisposition::FailedRetrying {
+            delete_by_ms: 1_000,
+        });
+        let stored = repository.get_or_create(operation).await.unwrap().operation;
+        let service = service(repository, backend.clone());
+
+        let cleaned = service.retry(stored.id().clone()).await.unwrap();
+        assert_eq!(cleaned.operation.phase(), OperationPhase::TerminalFailure);
+        assert_eq!(
+            cleaned.operation.terminal_winner(),
+            Some(TerminalWinner::TerminalFailure)
+        );
+        assert_eq!(cleaned.operation.cleanup(), &CleanupDisposition::Completed);
+        assert_eq!(backend.calls.lock().unwrap().as_slice(), ["delete"]);
     });
 }
 

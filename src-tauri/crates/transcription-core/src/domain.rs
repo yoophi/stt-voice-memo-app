@@ -314,6 +314,15 @@ pub enum CleanupDisposition {
     Completed,
 }
 
+impl CleanupDisposition {
+    pub fn needs_retry(&self) -> bool {
+        matches!(
+            self,
+            Self::Scheduled { .. } | Self::InProgress { .. } | Self::FailedRetrying { .. }
+        )
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RetryMetadata {

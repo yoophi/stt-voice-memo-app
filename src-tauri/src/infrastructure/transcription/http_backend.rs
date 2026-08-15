@@ -343,7 +343,7 @@ impl HttpTranscriptionBackend {
             .send()
             .await
             .map_err(map_reqwest_error)?;
-        parse_operation_response(response, &[StatusCode::OK], ResponseContract::Resource).await
+        parse_operation_response(response, &[StatusCode::OK], ResponseContract::Get).await
     }
 
     pub async fn delete(
@@ -367,13 +367,9 @@ impl HttpTranscriptionBackend {
             ensure_request_id(response.headers())?;
             return Ok(None);
         }
-        parse_operation_response(
-            response,
-            &[StatusCode::ACCEPTED],
-            ResponseContract::Resource,
-        )
-        .await
-        .map(Some)
+        parse_operation_response(response, &[StatusCode::ACCEPTED], ResponseContract::Delete)
+            .await
+            .map(Some)
     }
 
     pub fn cancel_local(&self, operation_id: &str) -> bool {
@@ -561,6 +557,30 @@ async fn parse_operation_response(
             request_id: Some(request_id),
         });
     }
+    let state_matches_method = match (contract, status) {
+        (ResponseContract::Create, StatusCode::ACCEPTED) => matches!(
+            operation.state,
+            OperationState::Queued | OperationState::Processing
+        ),
+        (ResponseContract::Create, StatusCode::OK) => matches!(
+            operation.state,
+            OperationState::Completed
+                | OperationState::Failed
+                | OperationState::Cancelled
+                | OperationState::Deleted
+        ),
+        (ResponseContract::Delete, StatusCode::ACCEPTED) => matches!(
+            operation.state,
+            OperationState::Cancelled | OperationState::Deleting
+        ),
+        (ResponseContract::Get, StatusCode::OK) => true,
+        _ => false,
+    };
+    if !state_matches_method {
+        return Err(HttpBackendError::MalformedResponse {
+            request_id: Some(request_id),
+        });
+    }
     if matches!(
         operation.state,
         OperationState::Queued | OperationState::Processing
@@ -577,7 +597,8 @@ async fn parse_operation_response(
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum ResponseContract {
     Create,
-    Resource,
+    Get,
+    Delete,
 }
 
 async fn read_limited(response: Response) -> Result<Vec<u8>, HttpBackendError> {

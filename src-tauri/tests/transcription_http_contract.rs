@@ -420,6 +420,95 @@ async fn create_replay_and_problem_responses_require_contract_headers() {
     assert!(matches!(error, HttpBackendError::MalformedResponse { .. }));
 }
 
+#[tokio::test]
+async fn methods_reject_incompatible_success_states() {
+    let completed = operation_json(
+        "completed",
+        Some(r#", "result":{"text":"safe","language":null}"#),
+    );
+    let (url, request) = spawn_server(
+        "202 Accepted",
+        &[
+            ("X-Request-Id", "request-get"),
+            ("Retry-After", "2"),
+            ("Location", "/v1/transcriptions/backend-operation"),
+        ],
+        completed.as_bytes(),
+        Duration::ZERO,
+    );
+    let accepted_completed_fixture = fixture();
+    let result = backend(url, Duration::from_secs(2))
+        .create(CreateUpload {
+            operation_id: OPERATION_ID.to_owned(),
+            source_audio_id: "source-fixture".to_owned(),
+            audio_path: accepted_completed_fixture.path().to_owned(),
+            file_name: "recording.m4a".to_owned(),
+            media_type: "audio/mp4".to_owned(),
+            byte_length: AUDIO.len() as u64,
+            sha256: SHA256.to_owned(),
+            language_hint: None,
+            access_token: AccessToken::new("test-user-token").unwrap(),
+            progress: Arc::new(|_| {}),
+        })
+        .await;
+    request.join().unwrap();
+    assert!(matches!(
+        result,
+        Err(HttpBackendError::MalformedResponse { .. })
+    ));
+
+    let queued = operation_json("queued", None);
+    let (url, request) = spawn_server(
+        "200 OK",
+        &[
+            ("X-Request-Id", "request-create"),
+            ("Retry-After", "2"),
+            ("Idempotency-Replayed", "true"),
+        ],
+        queued.as_bytes(),
+        Duration::ZERO,
+    );
+    let replayed_active_fixture = fixture();
+    let result = backend(url, Duration::from_secs(2))
+        .create(CreateUpload {
+            operation_id: OPERATION_ID.to_owned(),
+            source_audio_id: "source-fixture".to_owned(),
+            audio_path: replayed_active_fixture.path().to_owned(),
+            file_name: "recording.m4a".to_owned(),
+            media_type: "audio/mp4".to_owned(),
+            byte_length: AUDIO.len() as u64,
+            sha256: SHA256.to_owned(),
+            language_hint: None,
+            access_token: AccessToken::new("test-user-token").unwrap(),
+            progress: Arc::new(|_| {}),
+        })
+        .await;
+    request.join().unwrap();
+    assert!(matches!(
+        result,
+        Err(HttpBackendError::MalformedResponse { .. })
+    ));
+
+    let (url, request) = spawn_server(
+        "202 Accepted",
+        &[("X-Request-Id", "request-create"), ("Retry-After", "2")],
+        queued.as_bytes(),
+        Duration::ZERO,
+    );
+    let result = backend(url, Duration::from_secs(2))
+        .delete(
+            OPERATION_ID,
+            "backend-operation",
+            &AccessToken::new("test-user-token").unwrap(),
+        )
+        .await;
+    request.join().unwrap();
+    assert!(matches!(
+        result,
+        Err(HttpBackendError::MalformedResponse { .. })
+    ));
+}
+
 fn backend(base_url: Url, request_timeout: Duration) -> HttpTranscriptionBackend {
     HttpTranscriptionBackend::new(HttpBackendConfig {
         base_url,

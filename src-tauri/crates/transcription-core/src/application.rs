@@ -117,7 +117,7 @@ impl TranscriptionService {
         &self,
         operation_id: TranscriptionOperationId,
     ) -> Result<OperationOutcome, ApplicationError> {
-        let current = self.operations.load(&operation_id).await?;
+        let mut current = self.operations.load(&operation_id).await?;
         if matches!(
             current.phase(),
             OperationPhase::Cancelled | OperationPhase::TerminalFailure
@@ -127,7 +127,17 @@ impl TranscriptionService {
         let Some(backend_id) = current.backend_operation_id().cloned() else {
             return Ok(OperationOutcome::operation(current));
         };
-        let authorization = self.authorization.acquire().await?;
+        let authorization = match self.authorization.acquire().await {
+            Ok(authorization) => authorization,
+            Err(_) => {
+                current.mark_waiting_for_authorization(Failure::new(
+                    "AUTHENTICATION_REQUIRED",
+                    FailureCategory::UserActionable,
+                    None,
+                )?)?;
+                return Ok(OperationOutcome::operation(self.commit(current).await?));
+            }
+        };
         match self
             .backend
             .get(BackendOperationRequest {
@@ -149,6 +159,11 @@ impl TranscriptionService {
     ) -> Result<OperationOutcome, ApplicationError> {
         let mut current = self.operations.load(&operation_id).await?;
         match current.phase() {
+            OperationPhase::TerminalFailure
+                if current.cleanup().needs_retry() && current.backend_operation_id().is_some() =>
+            {
+                return self.dispatch_terminal_cleanup(current).await;
+            }
             OperationPhase::Completed
             | OperationPhase::Cancelled
             | OperationPhase::TerminalFailure => {
@@ -347,6 +362,37 @@ impl TranscriptionService {
                 Ok(OperationOutcome::operation(operation))
             }
         }
+    }
+
+    async fn dispatch_terminal_cleanup(
+        &self,
+        mut operation: TranscriptionOperation,
+    ) -> Result<OperationOutcome, ApplicationError> {
+        let backend_operation_id = operation
+            .backend_operation_id()
+            .cloned()
+            .ok_or(DomainError::MissingBackendOperationId)?;
+        let authorization = self.authorization.acquire().await?;
+        let remote = match self
+            .backend
+            .delete(BackendOperationRequest {
+                operation_id: operation.id().clone(),
+                backend_operation_id: backend_operation_id.clone(),
+                source_audio_id: operation.source_audio_id().clone(),
+                authorization,
+            })
+            .await
+        {
+            Ok(remote) => remote,
+            Err(_) => return Ok(OperationOutcome::operation(operation)),
+        };
+        if remote.id != backend_operation_id
+            || remote.source_audio_id != *operation.source_audio_id()
+        {
+            return Err(DomainError::BackendIdentityMismatch.into());
+        }
+        operation.set_cleanup(remote.cleanup);
+        Ok(OperationOutcome::operation(self.commit(operation).await?))
     }
 
     async fn apply_port_failure(
