@@ -127,6 +127,7 @@ struct Backend {
     calls: Mutex<Vec<&'static str>>,
     state: Mutex<BackendState>,
     delete_state: Mutex<BackendState>,
+    delete_backend_id: Mutex<Option<BackendOperationId>>,
     delete_failure: Mutex<Option<Failure>>,
     local_cancelled: AtomicBool,
     retained_progress: Mutex<Option<Arc<dyn UploadProgressSink>>>,
@@ -138,6 +139,7 @@ impl Backend {
             calls: Mutex::new(vec![]),
             state: Mutex::new(state),
             delete_state: Mutex::new(BackendState::Cancelled),
+            delete_backend_id: Mutex::new(None),
             delete_failure: Mutex::new(None),
             local_cancelled: AtomicBool::new(false),
             retained_progress: Mutex::new(None),
@@ -205,7 +207,11 @@ impl TranscriptionPort for Backend {
             return Err(TranscriptionPortError { failure });
         }
         let mut result = BackendOperation::active(
-            request.backend_operation_id,
+            self.delete_backend_id
+                .lock()
+                .unwrap()
+                .clone()
+                .unwrap_or(request.backend_operation_id),
             SourceAudioId::parse("source-1").unwrap(),
             *self.delete_state.lock().unwrap(),
         );
@@ -578,6 +584,61 @@ fn terminal_cleanup_rejects_incompatible_remote_state_without_replacing_winner()
 }
 
 #[test]
+fn terminal_cleanup_persists_identity_mismatch_with_request_correlation() {
+    block_on(async {
+        let repository = Arc::new(MemoryRepository::default());
+        let backend = Arc::new(Backend::new(BackendState::Queued));
+        *backend.delete_backend_id.lock().unwrap() =
+            Some(BackendOperationId::parse("different-backend").unwrap());
+        let source = SourceDescriptor::new(
+            SourceAudioId::parse("source-1").unwrap(),
+            "audio/mp4",
+            "m4a",
+            128,
+            1_000,
+            "a".repeat(64),
+        )
+        .unwrap();
+        let mut operation = TranscriptionOperation::new(
+            TranscriptionOperationId::parse(LOCAL_ID).unwrap(),
+            source.id.clone(),
+            SubmissionFingerprint::derive(&source, &TranscriptionOptions::default()),
+            TranscriptionOptions::default(),
+        );
+        operation.begin_upload(100).unwrap();
+        operation
+            .observe_backend_active(
+                BackendOperationId::parse("backend-1").unwrap(),
+                OperationPhase::Processing,
+                None,
+                None,
+            )
+            .unwrap();
+        operation
+            .fail_terminal(Failure::new("INVALID_AUDIO", FailureCategory::Terminal, None).unwrap())
+            .unwrap();
+        operation.set_cleanup(CleanupDisposition::FailedRetrying {
+            delete_by_ms: 1_000,
+        });
+        let stored = repository.get_or_create(operation).await.unwrap().operation;
+        let service = service(repository, backend.clone());
+
+        let rejected = service.retry(stored.id().clone()).await.unwrap();
+        assert_eq!(
+            rejected.operation.cleanup_failure().unwrap().code,
+            "BACKEND_IDENTITY_MISMATCH"
+        );
+        assert_eq!(
+            rejected.operation.backend_request_id().unwrap().to_string(),
+            "delete-request"
+        );
+        assert_eq!(rejected.operation.cleanup_attempts(), 1);
+        assert!(rejected.operation.retry().is_none());
+        assert_eq!(backend.calls.lock().unwrap().as_slice(), ["delete"]);
+    });
+}
+
+#[test]
 fn cancel_before_dispatch_is_local_and_repeated_cancel_is_idempotent() {
     block_on(async {
         let repository = Arc::new(MemoryRepository::default());
@@ -618,7 +679,16 @@ fn remote_cancel_persists_intent_and_preserves_completion_winner() {
     block_on(async {
         let repository = Arc::new(MemoryRepository::default());
         let backend = Arc::new(Backend::new(BackendState::Queued));
-        let service = service(repository, backend.clone());
+        let clock = Arc::new(MutableClock(AtomicU64::new(100)));
+        let service = TranscriptionService::new(
+            backend.clone(),
+            Arc::new(FixtureSource),
+            repository,
+            Arc::new(Auth),
+            Arc::new(Online),
+            clock.clone(),
+            Arc::new(Events::default()),
+        );
         let submitted = service
             .submit(
                 SourceAudioId::parse("source-1").unwrap(),
@@ -626,17 +696,41 @@ fn remote_cancel_persists_intent_and_preserves_completion_winner() {
             )
             .await
             .unwrap();
-        let cancelled = service
+        *backend.delete_failure.lock().unwrap() = Some(
+            Failure::new(
+                "BACKEND_UNAVAILABLE",
+                FailureCategory::Retryable,
+                Some(1_000),
+            )
+            .unwrap()
+            .with_request_id(BackendRequestId::parse("cancel-failure").unwrap()),
+        );
+        let pending = service
             .cancel(submitted.operation.id().clone())
             .await
             .unwrap();
+        assert_eq!(pending.operation.phase(), OperationPhase::CleanupPending);
+        assert_eq!(pending.operation.cleanup_attempts(), 1);
+        assert_eq!(
+            pending.operation.retry().unwrap().earliest_retry_at_ms,
+            1_100
+        );
+        let waiting = service.retry(pending.operation.id().clone()).await.unwrap();
+        assert_eq!(waiting.operation.phase(), OperationPhase::CleanupPending);
+        assert_eq!(
+            backend.calls.lock().unwrap().as_slice(),
+            ["create", "delete"]
+        );
+
+        clock.0.store(1_100, Ordering::SeqCst);
+        let cancelled = service.retry(waiting.operation.id().clone()).await.unwrap();
         assert_eq!(
             cancelled.operation.terminal_winner(),
             Some(TerminalWinner::Cancelled)
         );
         assert_eq!(
             backend.calls.lock().unwrap().as_slice(),
-            ["create", "delete"]
+            ["create", "delete", "delete"]
         );
     });
 }

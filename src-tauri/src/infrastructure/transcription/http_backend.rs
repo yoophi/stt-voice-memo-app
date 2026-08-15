@@ -111,9 +111,9 @@ pub struct UploadProgress {
 }
 
 #[derive(Clone, Debug)]
-pub struct DeleteResponse {
-    pub operation: Option<BackendOperation>,
-    pub request_id: String,
+pub enum DeleteResponse {
+    NoContent { request_id: String },
+    Operation(Box<BackendOperation>),
 }
 
 #[derive(Clone)]
@@ -227,13 +227,15 @@ impl TranscriptionPort for CoreHttpTranscriptionPort {
             )
             .await
             .map_err(map_core_error)?;
-        match response.operation {
-            Some(operation) => map_operation(operation).map_err(map_core_error),
-            None => {
-                let core_request_id = BackendRequestId::parse(response.request_id.clone())
-                    .map_err(|_| {
+        match response {
+            DeleteResponse::Operation(operation) => {
+                map_operation(*operation).map_err(map_core_error)
+            }
+            DeleteResponse::NoContent { request_id } => {
+                let core_request_id =
+                    BackendRequestId::parse(request_id.clone()).map_err(|_| {
                         map_core_error(HttpBackendError::MalformedResponse {
-                            request_id: Some(response.request_id),
+                            request_id: Some(request_id),
                         })
                     })?;
                 Ok(transcription_core::BackendOperation {
@@ -384,18 +386,12 @@ impl HttpTranscriptionBackend {
                     request_id: Some(request_id),
                 });
             }
-            return Ok(DeleteResponse {
-                operation: None,
-                request_id,
-            });
+            return Ok(DeleteResponse::NoContent { request_id });
         }
         let operation =
             parse_operation_response(response, &[StatusCode::ACCEPTED], ResponseContract::Delete)
                 .await?;
-        Ok(DeleteResponse {
-            request_id: operation.request_id.clone(),
-            operation: Some(operation),
-        })
+        Ok(DeleteResponse::Operation(Box::new(operation)))
     }
 
     pub fn cancel_local(&self, operation_id: &str) -> bool {

@@ -9,7 +9,7 @@ pub mod tauri_event_sink;
 #[allow(unused_imports)]
 pub use http_backend::{
     AccessToken, BackendFailure, BackendOperation, CleanupState, CleanupStatus, CreateUpload,
-    FailureCategory, HttpBackendConfig, HttpBackendError, HttpTranscriptionBackend,
+    DeleteResponse, FailureCategory, HttpBackendConfig, HttpBackendError, HttpTranscriptionBackend,
     OperationFailure, OperationResult, OperationState, ProgressCallback, TransportFailure,
     UploadProgress,
 };

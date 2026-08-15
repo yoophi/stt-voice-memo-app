@@ -156,7 +156,7 @@ impl TranscriptionService {
                 if current.cleanup().is_unresolved()
                     && current.backend_operation_id().is_some() =>
             {
-                if !current.terminal_cleanup_retry_ready(self.clock.now_ms()) {
+                if !current.cleanup_retry_ready(self.clock.now_ms()) {
                     return Ok(OperationOutcome::operation(current));
                 }
                 return self.dispatch_terminal_cleanup(current).await;
@@ -178,6 +178,9 @@ impl TranscriptionService {
             OperationPhase::Cancelling | OperationPhase::CleanupPending
                 if current.backend_operation_id().is_some() =>
             {
+                if !current.cleanup_retry_ready(self.clock.now_ms()) {
+                    return Ok(OperationOutcome::operation(current));
+                }
                 return self.dispatch_delete(current).await;
             }
             OperationPhase::Uploading => {
@@ -208,6 +211,9 @@ impl TranscriptionService {
             OperationPhase::Cancelling | OperationPhase::CleanupPending
                 if current.backend_operation_id().is_some() =>
             {
+                if !current.cleanup_retry_ready(self.clock.now_ms()) {
+                    return Ok(OperationOutcome::operation(current));
+                }
                 return self.dispatch_delete(current).await;
             }
             _ => {}
@@ -332,7 +338,23 @@ impl TranscriptionService {
             .backend_operation_id()
             .cloned()
             .ok_or(DomainError::MissingBackendOperationId)?;
-        let authorization = self.authorization.acquire().await?;
+        let authorization = match self.authorization.acquire().await {
+            Ok(authorization) => authorization,
+            Err(error) => {
+                operation.mark_cleanup_uncertain(
+                    Failure::new(
+                        "AUTHENTICATION_REQUIRED",
+                        FailureCategory::UserActionable,
+                        None,
+                    )?,
+                    self.clock.now_ms(),
+                )?;
+                let _ = self.commit(operation).await?;
+                return Err(ApplicationError::Authorization(error));
+            }
+        };
+        operation.prepare_user_cleanup_attempt(self.clock.now_ms())?;
+        operation = self.commit(operation).await?;
         match self
             .backend
             .delete(BackendOperationRequest {
@@ -345,7 +367,7 @@ impl TranscriptionService {
         {
             Ok(remote) => self.apply_backend(operation, remote).await,
             Err(error) => {
-                operation.mark_cleanup_uncertain(error.failure)?;
+                operation.mark_cleanup_uncertain(error.failure, self.clock.now_ms())?;
                 let operation = self.commit(operation).await?;
                 Ok(OperationOutcome::operation(operation))
             }
@@ -375,7 +397,7 @@ impl TranscriptionService {
                 return Err(ApplicationError::Authorization(error));
             }
         };
-        operation.begin_terminal_cleanup_attempt()?;
+        operation.prepare_user_cleanup_attempt(self.clock.now_ms())?;
         operation = self.commit(operation).await?;
         let remote = match self
             .backend
@@ -396,19 +418,33 @@ impl TranscriptionService {
         if remote.id != backend_operation_id
             || remote.source_audio_id != *operation.source_audio_id()
         {
-            return Err(DomainError::BackendIdentityMismatch.into());
+            return self
+                .record_terminal_cleanup_contract_failure(
+                    operation,
+                    "BACKEND_IDENTITY_MISMATCH",
+                    remote.request_id,
+                )
+                .await;
         }
         if !matches!(
             remote.state,
             BackendState::Cancelled | BackendState::Deleting | BackendState::Deleted
         ) {
             return self
-                .record_terminal_cleanup_contract_failure(operation, remote.request_id)
+                .record_terminal_cleanup_contract_failure(
+                    operation,
+                    "MALFORMED_BACKEND_RESPONSE",
+                    remote.request_id,
+                )
                 .await;
         }
         let Some(request_id) = remote.request_id else {
             return self
-                .record_terminal_cleanup_contract_failure(operation, None)
+                .record_terminal_cleanup_contract_failure(
+                    operation,
+                    "MALFORMED_BACKEND_RESPONSE",
+                    None,
+                )
                 .await;
         };
         operation.apply_terminal_cleanup_success(
@@ -423,13 +459,10 @@ impl TranscriptionService {
     async fn record_terminal_cleanup_contract_failure(
         &self,
         mut operation: TranscriptionOperation,
+        code: &'static str,
         request_id: Option<crate::BackendRequestId>,
     ) -> Result<OperationOutcome, ApplicationError> {
-        let mut failure = Failure::new(
-            "MALFORMED_BACKEND_RESPONSE",
-            FailureCategory::Terminal,
-            None,
-        )?;
+        let mut failure = Failure::new(code, FailureCategory::Terminal, None)?;
         if let Some(request_id) = request_id {
             failure = failure.with_request_id(request_id);
         }
@@ -579,14 +612,24 @@ impl TranscriptionService {
                 let Some(request_id) = remote.request_id else {
                     return self.malformed(operation).await;
                 };
-                operation.confirm_cancel(remote.cleanup, request_id)?;
+                operation.confirm_cancel(
+                    remote.cleanup,
+                    request_id,
+                    self.clock.now_ms(),
+                    remote.poll_after_ms,
+                )?;
                 None
             }
             BackendState::Deleting => {
                 let Some(request_id) = remote.request_id else {
                     return self.malformed(operation).await;
                 };
-                operation.confirm_cancel(remote.cleanup, request_id)?;
+                operation.confirm_cancel(
+                    remote.cleanup,
+                    request_id,
+                    self.clock.now_ms(),
+                    remote.poll_after_ms,
+                )?;
                 None
             }
         };

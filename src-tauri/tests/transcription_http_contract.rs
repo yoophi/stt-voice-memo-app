@@ -11,8 +11,8 @@ use std::{
 };
 
 use infrastructure::transcription::{
-    AccessToken, CreateUpload, FailureCategory, HttpBackendConfig, HttpBackendError,
-    HttpTranscriptionBackend, OperationState, UploadProgress,
+    AccessToken, CreateUpload, DeleteResponse, FailureCategory, HttpBackendConfig,
+    HttpBackendError, HttpTranscriptionBackend, OperationState, UploadProgress,
 };
 use tempfile::NamedTempFile;
 use url::Url;
@@ -118,8 +118,10 @@ async fn get_and_delete_use_exact_resource_path() {
         .delete(OPERATION_ID, "backend-operation", &token)
         .await
         .unwrap();
-    assert!(deleted.operation.is_none());
-    assert_eq!(deleted.request_id, "request-delete");
+    assert!(matches!(
+        deleted,
+        DeleteResponse::NoContent { ref request_id } if request_id == "request-delete"
+    ));
     let delete_request = String::from_utf8_lossy(&delete_request.join().unwrap()).to_string();
     assert!(delete_request.starts_with("DELETE /v1/transcriptions/backend-operation HTTP/1.1\r\n"));
 
@@ -149,9 +151,10 @@ async fn get_and_delete_use_exact_resource_path() {
     let deleting = backend(delete_url, Duration::from_secs(2))
         .delete(OPERATION_ID, "backend-operation", &token)
         .await
-        .unwrap()
-        .operation
         .unwrap();
+    let DeleteResponse::Operation(deleting) = deleting else {
+        panic!("DELETE 202 must return an operation");
+    };
     assert_eq!(deleting.state, OperationState::Deleting);
     assert_eq!(deleting.retry_after_seconds, Some(2));
     let delete_request = String::from_utf8_lossy(&delete_request.join().unwrap()).to_string();
