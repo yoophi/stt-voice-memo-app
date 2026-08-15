@@ -126,6 +126,7 @@ impl OperationEventSink for Events {
 struct Backend {
     calls: Mutex<Vec<&'static str>>,
     state: Mutex<BackendState>,
+    delete_state: Mutex<BackendState>,
     delete_failure: Mutex<Option<Failure>>,
     local_cancelled: AtomicBool,
     retained_progress: Mutex<Option<Arc<dyn UploadProgressSink>>>,
@@ -136,6 +137,7 @@ impl Backend {
         Self {
             calls: Mutex::new(vec![]),
             state: Mutex::new(state),
+            delete_state: Mutex::new(BackendState::Cancelled),
             delete_failure: Mutex::new(None),
             local_cancelled: AtomicBool::new(false),
             retained_progress: Mutex::new(None),
@@ -205,9 +207,10 @@ impl TranscriptionPort for Backend {
         let mut result = BackendOperation::active(
             request.backend_operation_id,
             SourceAudioId::parse("source-1").unwrap(),
-            BackendState::Cancelled,
+            *self.delete_state.lock().unwrap(),
         );
         result.cleanup = CleanupDisposition::Completed;
+        result.request_id = Some(BackendRequestId::parse("delete-request").unwrap());
         Ok(result)
     }
 }
@@ -502,10 +505,75 @@ fn terminal_failure_can_retry_unresolved_remote_cleanup_without_changing_winner(
         );
         assert_eq!(cleaned.operation.cleanup(), &CleanupDisposition::Completed);
         assert!(cleaned.operation.cleanup_failure().is_none());
+        assert_eq!(cleaned.operation.cleanup_attempts(), 2);
+        assert_eq!(
+            cleaned.operation.backend_request_id().unwrap().to_string(),
+            "delete-request"
+        );
         assert_eq!(
             backend.calls.lock().unwrap().as_slice(),
             ["delete", "delete"]
         );
+    });
+}
+
+#[test]
+fn terminal_cleanup_rejects_incompatible_remote_state_without_replacing_winner() {
+    block_on(async {
+        let repository = Arc::new(MemoryRepository::default());
+        let backend = Arc::new(Backend::new(BackendState::Queued));
+        *backend.delete_state.lock().unwrap() = BackendState::Queued;
+        let source = SourceDescriptor::new(
+            SourceAudioId::parse("source-1").unwrap(),
+            "audio/mp4",
+            "m4a",
+            128,
+            1_000,
+            "a".repeat(64),
+        )
+        .unwrap();
+        let mut operation = TranscriptionOperation::new(
+            TranscriptionOperationId::parse(LOCAL_ID).unwrap(),
+            source.id.clone(),
+            SubmissionFingerprint::derive(&source, &TranscriptionOptions::default()),
+            TranscriptionOptions::default(),
+        );
+        operation.begin_upload(100).unwrap();
+        operation
+            .observe_backend_active(
+                BackendOperationId::parse("backend-1").unwrap(),
+                OperationPhase::Processing,
+                None,
+                None,
+            )
+            .unwrap();
+        operation
+            .fail_terminal(Failure::new("INVALID_AUDIO", FailureCategory::Terminal, None).unwrap())
+            .unwrap();
+        operation.set_cleanup(CleanupDisposition::FailedRetrying {
+            delete_by_ms: 1_000,
+        });
+        let stored = repository.get_or_create(operation).await.unwrap().operation;
+        let service = service(repository, backend.clone());
+
+        let rejected = service.retry(stored.id().clone()).await.unwrap();
+        assert_eq!(
+            rejected.operation.terminal_winner(),
+            Some(TerminalWinner::TerminalFailure)
+        );
+        assert_eq!(rejected.operation.failure().unwrap().code, "INVALID_AUDIO");
+        assert_eq!(
+            rejected.operation.cleanup_failure().unwrap().code,
+            "MALFORMED_BACKEND_RESPONSE"
+        );
+        assert!(rejected.operation.retry().is_none());
+
+        let unchanged = service
+            .retry(rejected.operation.id().clone())
+            .await
+            .unwrap();
+        assert_eq!(unchanged.operation, rejected.operation);
+        assert_eq!(backend.calls.lock().unwrap().as_slice(), ["delete"]);
     });
 }
 

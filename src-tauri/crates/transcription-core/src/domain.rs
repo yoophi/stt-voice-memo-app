@@ -315,7 +315,7 @@ pub enum CleanupDisposition {
 }
 
 impl CleanupDisposition {
-    pub fn needs_retry(&self) -> bool {
+    pub fn is_unresolved(&self) -> bool {
         matches!(
             self,
             Self::Scheduled { .. } | Self::InProgress { .. } | Self::FailedRetrying { .. }
@@ -376,6 +376,8 @@ pub struct TranscriptionOperation {
     failure: Option<Failure>,
     #[serde(default)]
     cleanup_failure: Option<Failure>,
+    #[serde(default)]
+    cleanup_attempts: u32,
     retry: Option<RetryMetadata>,
     #[serde(default)]
     poll_at_ms: Option<u64>,
@@ -406,6 +408,7 @@ impl TranscriptionOperation {
             terminal_winner: None,
             failure: None,
             cleanup_failure: None,
+            cleanup_attempts: 0,
             retry: None,
             poll_at_ms: None,
             cleanup: CleanupDisposition::NotScheduled,
@@ -449,6 +452,9 @@ impl TranscriptionOperation {
     pub fn cleanup_failure(&self) -> Option<&Failure> {
         self.cleanup_failure.as_ref()
     }
+    pub fn cleanup_attempts(&self) -> u32 {
+        self.cleanup_attempts
+    }
     pub fn retry(&self) -> Option<&RetryMetadata> {
         self.retry.as_ref()
     }
@@ -471,7 +477,7 @@ impl TranscriptionOperation {
         self.cancel_requested
     }
     pub fn needs_recovery(&self) -> bool {
-        self.terminal_winner.is_none() || self.cleanup.needs_retry()
+        self.terminal_winner.is_none() || self.cleanup.is_unresolved()
     }
 
     pub fn set_revision(&mut self, revision: u64) {
@@ -641,10 +647,15 @@ impl TranscriptionOperation {
         Ok(())
     }
 
-    pub fn confirm_cancel(&mut self, cleanup: CleanupDisposition) -> Result<(), DomainError> {
+    pub fn confirm_cancel(
+        &mut self,
+        cleanup: CleanupDisposition,
+        request_id: BackendRequestId,
+    ) -> Result<(), DomainError> {
         self.cancel_requested = true;
         self.choose_terminal(TerminalWinner::Cancelled)?;
         self.cleanup = cleanup;
+        self.backend_request_id = Some(request_id);
         self.phase = if matches!(self.cleanup, CleanupDisposition::Completed) {
             OperationPhase::Cancelled
         } else {
@@ -679,10 +690,43 @@ impl TranscriptionOperation {
 
     pub fn set_cleanup(&mut self, cleanup: CleanupDisposition) {
         self.cleanup = cleanup;
-        if !self.cleanup.needs_retry() {
+        if !self.cleanup.is_unresolved() {
             self.cleanup_failure = None;
             self.retry = None;
         }
+    }
+
+    pub fn apply_terminal_cleanup_success(
+        &mut self,
+        cleanup: CleanupDisposition,
+        request_id: BackendRequestId,
+        now_ms: u64,
+        retry_after_ms: Option<u64>,
+    ) -> Result<(), DomainError> {
+        if self.terminal_winner != Some(TerminalWinner::TerminalFailure) {
+            return Err(DomainError::InvalidTransition);
+        }
+        self.backend_request_id = Some(request_id);
+        self.set_cleanup(cleanup);
+        self.cleanup_failure = None;
+        self.retry = self.cleanup.is_unresolved().then(|| RetryMetadata {
+            earliest_retry_at_ms: now_ms.saturating_add(retry_after_ms.unwrap_or(0)),
+            max_attempts: 5,
+        });
+        Ok(())
+    }
+
+    pub fn begin_terminal_cleanup_attempt(&mut self) -> Result<(), DomainError> {
+        if self.terminal_winner != Some(TerminalWinner::TerminalFailure)
+            || !self.cleanup.is_unresolved()
+        {
+            return Err(DomainError::InvalidTransition);
+        }
+        if self.cleanup_attempts >= 5 {
+            return Err(DomainError::RetryExhausted);
+        }
+        self.cleanup_attempts += 1;
+        Ok(())
     }
 
     pub fn record_terminal_cleanup_failure(
@@ -691,12 +735,16 @@ impl TranscriptionOperation {
         now_ms: u64,
     ) -> Result<(), DomainError> {
         if self.terminal_winner != Some(TerminalWinner::TerminalFailure)
-            || !self.cleanup.needs_retry()
+            || !self.cleanup.is_unresolved()
         {
             return Err(DomainError::InvalidTransition);
         }
         self.backend_request_id = failure.request_id.clone();
-        self.retry = Some(RetryMetadata {
+        let retry_eligible = matches!(
+            failure.category,
+            FailureCategory::Retryable | FailureCategory::Uncertain
+        ) || failure.is_authentication_required();
+        self.retry = retry_eligible.then(|| RetryMetadata {
             earliest_retry_at_ms: now_ms.saturating_add(failure.retry_after_ms.unwrap_or(0)),
             max_attempts: 5,
         });
@@ -705,9 +753,17 @@ impl TranscriptionOperation {
     }
 
     pub fn terminal_cleanup_retry_ready(&self, now_ms: u64) -> bool {
-        self.retry
-            .as_ref()
-            .is_none_or(|retry| now_ms >= retry.earliest_retry_at_ms)
+        if self.cleanup_attempts >= 5 {
+            return false;
+        }
+        match (&self.cleanup_failure, &self.retry) {
+            (None, Some(retry)) => now_ms >= retry.earliest_retry_at_ms,
+            (None, None) => true,
+            (Some(_), Some(retry)) => {
+                self.cleanup_attempts < retry.max_attempts && now_ms >= retry.earliest_retry_at_ms
+            }
+            (Some(_), None) => false,
+        }
     }
 
     pub fn recover_interrupted_upload(&mut self) -> bool {

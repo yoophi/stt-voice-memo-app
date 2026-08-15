@@ -118,7 +118,8 @@ async fn get_and_delete_use_exact_resource_path() {
         .delete(OPERATION_ID, "backend-operation", &token)
         .await
         .unwrap();
-    assert!(deleted.is_none());
+    assert!(deleted.operation.is_none());
+    assert_eq!(deleted.request_id, "request-delete");
     let delete_request = String::from_utf8_lossy(&delete_request.join().unwrap()).to_string();
     assert!(delete_request.starts_with("DELETE /v1/transcriptions/backend-operation HTTP/1.1\r\n"));
 
@@ -149,6 +150,7 @@ async fn get_and_delete_use_exact_resource_path() {
         .delete(OPERATION_ID, "backend-operation", &token)
         .await
         .unwrap()
+        .operation
         .unwrap();
     assert_eq!(deleting.state, OperationState::Deleting);
     assert_eq!(deleting.retry_after_seconds, Some(2));

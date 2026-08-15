@@ -110,6 +110,12 @@ pub struct UploadProgress {
     pub total_bytes: u64,
 }
 
+#[derive(Clone, Debug)]
+pub struct DeleteResponse {
+    pub operation: Option<BackendOperation>,
+    pub request_id: String,
+}
+
 #[derive(Clone)]
 pub struct HttpTranscriptionBackend {
     client: Client,
@@ -212,7 +218,7 @@ impl TranscriptionPort for CoreHttpTranscriptionPort {
             AccessToken::new(request.authorization.expose_to_adapter()).map_err(map_core_error)?;
         let backend_id = request.backend_operation_id.clone();
         let source_id = request.source_audio_id.clone();
-        match self
+        let response = self
             .backend
             .delete(
                 &request.operation_id.to_string(),
@@ -220,19 +226,27 @@ impl TranscriptionPort for CoreHttpTranscriptionPort {
                 &token,
             )
             .await
-            .map_err(map_core_error)?
-        {
+            .map_err(map_core_error)?;
+        match response.operation {
             Some(operation) => map_operation(operation).map_err(map_core_error),
-            None => Ok(transcription_core::BackendOperation {
-                id: backend_id,
-                source_audio_id: source_id,
-                state: BackendState::Deleted,
-                result: None,
-                failure: None,
-                cleanup: CleanupDisposition::Completed,
-                request_id: None,
-                poll_after_ms: None,
-            }),
+            None => {
+                let core_request_id = BackendRequestId::parse(response.request_id.clone())
+                    .map_err(|_| {
+                        map_core_error(HttpBackendError::MalformedResponse {
+                            request_id: Some(response.request_id),
+                        })
+                    })?;
+                Ok(transcription_core::BackendOperation {
+                    id: backend_id,
+                    source_audio_id: source_id,
+                    state: BackendState::Deleted,
+                    result: None,
+                    failure: None,
+                    cleanup: CleanupDisposition::Completed,
+                    request_id: Some(core_request_id),
+                    poll_after_ms: None,
+                })
+            }
         }
     }
 }
@@ -351,7 +365,7 @@ impl HttpTranscriptionBackend {
         local_operation_id: &str,
         backend_operation_id: &str,
         access_token: &AccessToken,
-    ) -> Result<Option<BackendOperation>, HttpBackendError> {
+    ) -> Result<DeleteResponse, HttpBackendError> {
         validate_component(local_operation_id, "local operation id")?;
         validate_component(backend_operation_id, "backend operation id")?;
         self.cancel_local(local_operation_id);
@@ -370,11 +384,18 @@ impl HttpTranscriptionBackend {
                     request_id: Some(request_id),
                 });
             }
-            return Ok(None);
+            return Ok(DeleteResponse {
+                operation: None,
+                request_id,
+            });
         }
-        parse_operation_response(response, &[StatusCode::ACCEPTED], ResponseContract::Delete)
-            .await
-            .map(Some)
+        let operation =
+            parse_operation_response(response, &[StatusCode::ACCEPTED], ResponseContract::Delete)
+                .await?;
+        Ok(DeleteResponse {
+            request_id: operation.request_id.clone(),
+            operation: Some(operation),
+        })
     }
 
     pub fn cancel_local(&self, operation_id: &str) -> bool {

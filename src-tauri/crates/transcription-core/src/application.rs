@@ -153,7 +153,8 @@ impl TranscriptionService {
         let mut current = self.operations.load(&operation_id).await?;
         match current.phase() {
             OperationPhase::TerminalFailure
-                if current.cleanup().needs_retry() && current.backend_operation_id().is_some() =>
+                if current.cleanup().is_unresolved()
+                    && current.backend_operation_id().is_some() =>
             {
                 if !current.terminal_cleanup_retry_ready(self.clock.now_ms()) {
                     return Ok(OperationOutcome::operation(current));
@@ -374,6 +375,8 @@ impl TranscriptionService {
                 return Err(ApplicationError::Authorization(error));
             }
         };
+        operation.begin_terminal_cleanup_attempt()?;
+        operation = self.commit(operation).await?;
         let remote = match self
             .backend
             .delete(BackendOperationRequest {
@@ -395,7 +398,42 @@ impl TranscriptionService {
         {
             return Err(DomainError::BackendIdentityMismatch.into());
         }
-        operation.set_cleanup(remote.cleanup);
+        if !matches!(
+            remote.state,
+            BackendState::Cancelled | BackendState::Deleting | BackendState::Deleted
+        ) {
+            return self
+                .record_terminal_cleanup_contract_failure(operation, remote.request_id)
+                .await;
+        }
+        let Some(request_id) = remote.request_id else {
+            return self
+                .record_terminal_cleanup_contract_failure(operation, None)
+                .await;
+        };
+        operation.apply_terminal_cleanup_success(
+            remote.cleanup,
+            request_id,
+            self.clock.now_ms(),
+            remote.poll_after_ms,
+        )?;
+        Ok(OperationOutcome::operation(self.commit(operation).await?))
+    }
+
+    async fn record_terminal_cleanup_contract_failure(
+        &self,
+        mut operation: TranscriptionOperation,
+        request_id: Option<crate::BackendRequestId>,
+    ) -> Result<OperationOutcome, ApplicationError> {
+        let mut failure = Failure::new(
+            "MALFORMED_BACKEND_RESPONSE",
+            FailureCategory::Terminal,
+            None,
+        )?;
+        if let Some(request_id) = request_id {
+            failure = failure.with_request_id(request_id);
+        }
+        operation.record_terminal_cleanup_failure(failure, self.clock.now_ms())?;
         Ok(OperationOutcome::operation(self.commit(operation).await?))
     }
 
@@ -538,11 +576,17 @@ impl TranscriptionService {
                 None
             }
             BackendState::Cancelled | BackendState::Deleted => {
-                operation.confirm_cancel(remote.cleanup)?;
+                let Some(request_id) = remote.request_id else {
+                    return self.malformed(operation).await;
+                };
+                operation.confirm_cancel(remote.cleanup, request_id)?;
                 None
             }
             BackendState::Deleting => {
-                operation.confirm_cancel(remote.cleanup)?;
+                let Some(request_id) = remote.request_id else {
+                    return self.malformed(operation).await;
+                };
+                operation.confirm_cancel(remote.cleanup, request_id)?;
                 None
             }
         };

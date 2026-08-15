@@ -92,4 +92,36 @@ fn first_terminal_winner_is_immutable_and_cleanup_is_orthogonal() {
         aggregate.terminal_winner().unwrap().to_string(),
         "terminalFailure"
     );
+
+    for attempt in 1..=5 {
+        aggregate.begin_terminal_cleanup_attempt().unwrap();
+        aggregate
+            .record_terminal_cleanup_failure(
+                Failure::new("BACKEND_UNAVAILABLE", FailureCategory::Retryable, Some(0)).unwrap(),
+                100,
+            )
+            .unwrap();
+        assert_eq!(aggregate.cleanup_attempts(), attempt);
+    }
+    assert!(!aggregate.terminal_cleanup_retry_ready(100));
+    assert!(matches!(
+        aggregate.begin_terminal_cleanup_attempt(),
+        Err(DomainError::RetryExhausted)
+    ));
+
+    let mut non_retryable = operation();
+    non_retryable.begin_upload(10).unwrap();
+    non_retryable
+        .fail_terminal(Failure::new("MALFORMED_RESPONSE", FailureCategory::Terminal, None).unwrap())
+        .unwrap();
+    non_retryable.set_cleanup(CleanupDisposition::FailedRetrying { delete_by_ms: 500 });
+    non_retryable.begin_terminal_cleanup_attempt().unwrap();
+    non_retryable
+        .record_terminal_cleanup_failure(
+            Failure::new("INVALID_DELETE_RESPONSE", FailureCategory::Terminal, None).unwrap(),
+            100,
+        )
+        .unwrap();
+    assert!(non_retryable.retry().is_none());
+    assert!(!non_retryable.terminal_cleanup_retry_ready(100));
 }
