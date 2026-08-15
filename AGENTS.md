@@ -32,12 +32,10 @@
 
 ## Current Feature
 
-- Plan: `specs/005-backend-monorepo-workspace/plan.md`
-- Specification: `specs/005-backend-monorepo-workspace/spec.md`
-- Scope: Issue #11 root pnpm/Cargo workspace ownership, canonical transcription
-  contract packaging and drift checks, client/backend secret boundaries, scoped
-  CI validation, contributor documentation, and unchanged Tauri mobile paths.
-  Production backend runtime behavior remains in Issues #12 through #20.
+- Plan: `specs/006-android-tauri-host/plan.md`
+- Specification: `specs/006-android-tauri-host/spec.md`
+- Scope: Issue #24 tracked API 24+ Android Tauri host, minimum capability
+  allowlist, reproducible root APK build, and physical-device handoff to Issue #23.
 
 ## References
 

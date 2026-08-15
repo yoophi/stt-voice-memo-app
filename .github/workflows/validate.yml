@@ -95,8 +95,50 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm validate:mobile
 
+  android-host:
+    needs: changes
+    if: needs.changes.outputs.mobile == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.0.9
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.22.0
+          cache: pnpm
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v3
+      - name: Install reviewed Android SDK and NDK
+        run: sdkmanager "platforms;android-36" "build-tools;35.0.0" "platform-tools" "ndk;28.2.13676358"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+      - uses: actions/cache@v4
+        with:
+          path: |
+            target
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: scope-android-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'src-tauri/**', 'pnpm-lock.yaml') }}
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm validate:android-host
+      - run: pnpm build:android
+      - name: Inspect packaged APK capabilities
+        shell: bash
+        run: |
+          apk="src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk"
+          node scripts/workspace/check-android-apk.mjs \
+            --apk "$apk" \
+            --variant debug \
+            --canary stt-apk-payload-canary-never-secret
+
   aggregate:
-    needs: [changes, mobile, backend, contract]
+    needs: [changes, mobile, android-host, backend, contract]
     if: always() && github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
@@ -105,6 +147,8 @@ jobs:
           CHANGES_RESULT: ${{ needs.changes.result }}
           MOBILE_SELECTED: ${{ needs.changes.outputs.mobile }}
           MOBILE_RESULT: ${{ needs.mobile.result }}
+          ANDROID_SELECTED: ${{ needs.changes.outputs.mobile }}
+          ANDROID_RESULT: ${{ needs.android-host.result }}
           BACKEND_SELECTED: ${{ needs.changes.outputs.backend }}
           BACKEND_RESULT: ${{ needs.backend.result }}
           CONTRACT_SELECTED: ${{ needs.changes.outputs.contract }}
@@ -115,7 +159,7 @@ jobs:
             echo "scope selection failed" >&2
             exit 1
           fi
-          for scope in MOBILE BACKEND CONTRACT; do
+          for scope in MOBILE ANDROID BACKEND CONTRACT; do
             selected_name="${scope}_SELECTED"
             result_name="${scope}_RESULT"
             if [[ "${!selected_name}" == "true" && "${!result_name}" != "success" ]]; then

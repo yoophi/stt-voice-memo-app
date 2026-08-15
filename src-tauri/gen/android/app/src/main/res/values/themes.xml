@@ -1,0 +1,3 @@
+<resources>
+    <style name="Theme.stt_voice_memo_app" parent="Theme.AppCompat.DayNight.NoActionBar" />
+</resources>
