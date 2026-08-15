@@ -121,6 +121,7 @@ struct Backend {
     calls: Mutex<Vec<&'static str>>,
     state: Mutex<BackendState>,
     local_cancelled: AtomicBool,
+    retained_progress: Mutex<Option<Arc<dyn UploadProgressSink>>>,
 }
 
 impl Backend {
@@ -129,6 +130,7 @@ impl Backend {
             calls: Mutex::new(vec![]),
             state: Mutex::new(state),
             local_cancelled: AtomicBool::new(false),
+            retained_progress: Mutex::new(None),
         }
     }
 }
@@ -156,6 +158,7 @@ impl TranscriptionPort for Backend {
             )
             .unwrap(),
         );
+        *self.retained_progress.lock().unwrap() = Some(request.progress.clone());
         let mut operation = BackendOperation::active(
             BackendOperationId::parse("backend-1").unwrap(),
             request.source.id,
@@ -211,7 +214,7 @@ fn service(repository: Arc<MemoryRepository>, backend: Arc<Backend>) -> Transcri
 }
 
 #[test]
-fn submit_deduplicates_then_status_returns_one_nonblank_final_result() {
+fn submit_does_not_wait_for_retained_progress_and_returns_one_final_result() {
     block_on(async {
         let repository = Arc::new(MemoryRepository::default());
         let backend = Arc::new(Backend::new(BackendState::Queued));
@@ -229,11 +232,12 @@ fn submit_deduplicates_then_status_returns_one_nonblank_final_result() {
         assert_eq!(first.operation.id(), duplicate.operation.id());
         assert_eq!(first.operation.progress().unwrap().supplied_bytes, 128);
         assert_eq!(first.operation.poll_at_ms(), Some(2_100));
+        assert!(backend.retained_progress.lock().unwrap().is_some());
         assert_eq!(backend.calls.lock().unwrap().as_slice(), ["create", "get"]);
 
         *backend.state.lock().unwrap() = BackendState::Completed;
         let completed = service.status(first.operation.id().clone()).await.unwrap();
-        assert_eq!(completed.operation.phase(), OperationPhase::CleanupPending);
+        assert_eq!(completed.operation.phase(), OperationPhase::Completed);
         assert_eq!(
             completed.operation.cleanup(),
             &CleanupDisposition::Scheduled {
@@ -245,14 +249,23 @@ fn submit_deduplicates_then_status_returns_one_nonblank_final_result() {
 }
 
 #[test]
-fn cancelling_an_upload_requests_transport_cancellation_and_keeps_reconciliation_pending() {
+fn cancelling_an_upload_stops_transport_then_replays_to_reconcile_delete() {
     block_on(async {
         let repository = Arc::new(MemoryRepository::default());
         let backend = Arc::new(Backend::new(BackendState::Queued));
+        let source = SourceDescriptor::new(
+            SourceAudioId::parse("source-1").unwrap(),
+            "audio/mp4",
+            "m4a",
+            128,
+            1_000,
+            "a".repeat(64),
+        )
+        .unwrap();
         let mut candidate = TranscriptionOperation::new(
             TranscriptionOperationId::parse(LOCAL_ID).unwrap(),
-            SourceAudioId::parse("source-1").unwrap(),
-            SubmissionFingerprint::parse(&"a".repeat(64)).unwrap(),
+            source.id.clone(),
+            SubmissionFingerprint::derive(&source, &TranscriptionOptions::default()),
             TranscriptionOptions::default(),
         );
         candidate.begin_upload(100).unwrap();
@@ -263,6 +276,13 @@ fn cancelling_an_upload_requests_transport_cancellation_and_keeps_reconciliation
         assert_eq!(outcome.operation.phase(), OperationPhase::Cancelling);
         assert!(outcome.operation.cancel_requested());
         assert!(backend.local_cancelled.load(Ordering::SeqCst));
+
+        let reconciled = service.retry(stored.id().clone()).await.unwrap();
+        assert_eq!(reconciled.operation.phase(), OperationPhase::Cancelled);
+        assert_eq!(
+            backend.calls.lock().unwrap().as_slice(),
+            ["create", "delete"]
+        );
     });
 }
 

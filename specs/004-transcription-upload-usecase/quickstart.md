@@ -111,7 +111,7 @@ recorder-to-source integration remain separate work.
 
 - `cargo test --manifest-path src-tauri/Cargo.toml --workspace`: passed; the
   transcription core contributed 17 state/use-case/recovery tests and the HTTP
-  loopback target ran 11 transport, persistence, and safety tests.
+  loopback target ran 12 transport, persistence, and safety tests.
 - Full Vitest suite: 43/43 passed, including 6 Issue #5 artifact and architecture
   checks.
 - `cargo fmt --check`, strict workspace clippy, `tsc -b`, ESLint, and targeted

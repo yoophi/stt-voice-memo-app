@@ -248,7 +248,12 @@ impl TranscriptionService {
         mut operation: TranscriptionOperation,
         source: crate::SourceDescriptor,
     ) -> Result<OperationOutcome, ApplicationError> {
+        let reconciling_cancel =
+            operation.cancel_requested() && operation.backend_operation_id().is_none();
         if !self.connectivity.is_online().await {
+            if reconciling_cancel {
+                return Ok(OperationOutcome::operation(operation));
+            }
             if operation.phase() != OperationPhase::WaitingForNetwork {
                 operation.mark_waiting_for_network()?;
                 operation = self.commit(operation).await?;
@@ -275,10 +280,15 @@ impl TranscriptionService {
             }
         };
         let latest = self.operations.load(operation.id()).await?;
-        if latest.cancel_requested() || latest.phase() == OperationPhase::Cancelling {
+        if (latest.cancel_requested() || latest.phase() == OperationPhase::Cancelling)
+            && !reconciling_cancel
+        {
             return Ok(OperationOutcome::operation(latest));
         }
         operation = latest;
+        if reconciling_cancel {
+            self.backend.prepare_cancel_reconciliation(operation.id());
+        }
         let (progress_sender, mut progress_receiver) = futures::channel::mpsc::unbounded();
         let request = CreateTranscriptionRequest {
             operation_id: operation.id().clone(),
@@ -301,7 +311,7 @@ impl TranscriptionService {
                 }
             }
         };
-        while let Some(observation) = progress_receiver.next().await {
+        while let Ok(observation) = progress_receiver.try_recv() {
             persist_progress(&self.operations, &self.events, observation).await;
         }
         let latest = self.operations.load(operation.id()).await?;

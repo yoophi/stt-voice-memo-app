@@ -87,7 +87,7 @@ fn first_terminal_winner_is_immutable_and_cleanup_is_orthogonal() {
         Err(DomainError::TerminalConflict)
     ));
     aggregate.set_cleanup(CleanupDisposition::FailedRetrying { delete_by_ms: 500 });
-    assert_eq!(aggregate.phase(), OperationPhase::CleanupPending);
+    assert_eq!(aggregate.phase(), OperationPhase::TerminalFailure);
     assert_eq!(
         aggregate.terminal_winner().unwrap().to_string(),
         "terminalFailure"

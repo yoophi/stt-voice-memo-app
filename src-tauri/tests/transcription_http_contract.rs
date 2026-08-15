@@ -35,7 +35,7 @@ async fn create_streams_exact_headers_and_multipart_contract() {
         Duration::ZERO,
     );
     let backend = backend(url, Duration::from_secs(2));
-    let fixture = fixture();
+    let first_fixture = fixture();
     let observations = Arc::new(Mutex::new(Vec::<UploadProgress>::new()));
     let observed = observations.clone();
 
@@ -43,7 +43,7 @@ async fn create_streams_exact_headers_and_multipart_contract() {
         .create(CreateUpload {
             operation_id: OPERATION_ID.to_owned(),
             source_audio_id: "source-fixture".to_owned(),
-            audio_path: fixture.path().to_owned(),
+            audio_path: first_fixture.path().to_owned(),
             file_name: "recording.m4a".to_owned(),
             media_type: "audio/mp4".to_owned(),
             byte_length: AUDIO.len() as u64,
@@ -190,14 +190,14 @@ async fn local_cancellation_drops_an_in_flight_create() {
         Duration::from_secs(2),
     );
     let backend = backend(url, Duration::from_secs(5));
-    let fixture = fixture();
+    let second_fixture = fixture();
     let create_backend = backend.clone();
     let create = tokio::spawn(async move {
         create_backend
             .create(CreateUpload {
                 operation_id: OPERATION_ID.to_owned(),
                 source_audio_id: "source-fixture".to_owned(),
-                audio_path: fixture.path().to_owned(),
+                audio_path: second_fixture.path().to_owned(),
                 file_name: "recording.m4a".to_owned(),
                 media_type: "audio/mp4".to_owned(),
                 byte_length: AUDIO.len() as u64,
@@ -286,12 +286,12 @@ async fn accepted_and_content_responses_require_contract_headers() {
         body.as_bytes(),
         Duration::ZERO,
     );
-    let fixture = fixture();
+    let missing_header_fixture = fixture();
     let error = backend(url, Duration::from_secs(2))
         .create(CreateUpload {
             operation_id: OPERATION_ID.to_owned(),
             source_audio_id: "source-fixture".to_owned(),
-            audio_path: fixture.path().to_owned(),
+            audio_path: missing_header_fixture.path().to_owned(),
             file_name: "recording.m4a".to_owned(),
             media_type: "audio/mp4".to_owned(),
             byte_length: AUDIO.len() as u64,
@@ -316,6 +316,97 @@ async fn accepted_and_content_responses_require_contract_headers() {
             ("Test-Omit-Cache-Control", "true"),
         ],
         completed.as_bytes(),
+        Duration::ZERO,
+    );
+    let error = backend(url, Duration::from_secs(2))
+        .get(
+            "backend-operation",
+            &AccessToken::new("test-user-token").unwrap(),
+        )
+        .await
+        .unwrap_err();
+    request.join().unwrap();
+    assert!(matches!(error, HttpBackendError::MalformedResponse { .. }));
+}
+
+#[tokio::test]
+async fn create_replay_and_problem_responses_require_contract_headers() {
+    let completed = operation_json(
+        "completed",
+        Some(r#", "result":{"text":"safe","language":null}"#),
+    );
+    let (url, request) = spawn_server(
+        "200 OK",
+        &[("X-Request-Id", "request-get")],
+        completed.as_bytes(),
+        Duration::ZERO,
+    );
+    let replay_fixture = fixture();
+    let error = backend(url, Duration::from_secs(2))
+        .create(CreateUpload {
+            operation_id: OPERATION_ID.to_owned(),
+            source_audio_id: "source-fixture".to_owned(),
+            audio_path: replay_fixture.path().to_owned(),
+            file_name: "recording.m4a".to_owned(),
+            media_type: "audio/mp4".to_owned(),
+            byte_length: AUDIO.len() as u64,
+            sha256: SHA256.to_owned(),
+            language_hint: None,
+            access_token: AccessToken::new("test-user-token").unwrap(),
+            progress: Arc::new(|_| {}),
+        })
+        .await
+        .unwrap_err();
+    request.join().unwrap();
+    assert!(matches!(error, HttpBackendError::MalformedResponse { .. }));
+
+    let (url, request) = spawn_server(
+        "200 OK",
+        &[
+            ("X-Request-Id", "request-get"),
+            ("Idempotency-Replayed", "true"),
+        ],
+        completed.as_bytes(),
+        Duration::ZERO,
+    );
+    let fixture = fixture();
+    let replayed = backend(url, Duration::from_secs(2))
+        .create(CreateUpload {
+            operation_id: OPERATION_ID.to_owned(),
+            source_audio_id: "source-fixture".to_owned(),
+            audio_path: fixture.path().to_owned(),
+            file_name: "recording.m4a".to_owned(),
+            media_type: "audio/mp4".to_owned(),
+            byte_length: AUDIO.len() as u64,
+            sha256: SHA256.to_owned(),
+            language_hint: None,
+            access_token: AccessToken::new("test-user-token").unwrap(),
+            progress: Arc::new(|_| {}),
+        })
+        .await
+        .unwrap();
+    request.join().unwrap();
+    assert_eq!(replayed.state, OperationState::Completed);
+
+    let problem = br#"{
+      "type":"https://example.invalid/problems/rate-limited",
+      "title":"Rate limited",
+      "status":429,
+      "detail":"safe",
+      "code":"RATE_LIMITED",
+      "category":"retryable",
+      "retryable":true,
+      "request_id":"request-rate",
+      "retry_after_seconds":7
+    }"#;
+    let (url, request) = spawn_server(
+        "429 Too Many Requests",
+        &[
+            ("X-Request-Id", "request-rate"),
+            ("Retry-After", "7"),
+            ("Test-Omit-Cache-Control", "true"),
+        ],
+        problem,
         Duration::ZERO,
     );
     let error = backend(url, Duration::from_secs(2))

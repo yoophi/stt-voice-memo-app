@@ -661,12 +661,6 @@ impl TranscriptionOperation {
 
     pub fn set_cleanup(&mut self, cleanup: CleanupDisposition) {
         self.cleanup = cleanup;
-        if !matches!(
-            self.cleanup,
-            CleanupDisposition::Completed | CleanupDisposition::NotScheduled
-        ) {
-            self.phase = OperationPhase::CleanupPending;
-        }
     }
 
     pub fn recover_interrupted_upload(&mut self) -> bool {

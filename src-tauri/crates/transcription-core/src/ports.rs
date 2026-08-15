@@ -211,6 +211,8 @@ pub trait TranscriptionPort: Send + Sync {
         false
     }
 
+    fn prepare_cancel_reconciliation(&self, _operation_id: &TranscriptionOperationId) {}
+
     async fn create(
         &self,
         request: CreateTranscriptionRequest,

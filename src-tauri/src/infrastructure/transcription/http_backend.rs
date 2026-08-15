@@ -36,6 +36,7 @@ use transcription_core::{
 use super::private_source_audio::PrivateSourceAudioStore;
 
 const CREATE_PATH: &str = "v1/transcriptions";
+const IDEMPOTENCY_REPLAYED: &str = "Idempotency-Replayed";
 const MAX_RESPONSE_BYTES: usize = 256 * 1024;
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 
@@ -135,6 +136,14 @@ impl CoreHttpTranscriptionPort {
 impl TranscriptionPort for CoreHttpTranscriptionPort {
     fn cancel_local(&self, operation_id: &transcription_core::TranscriptionOperationId) -> bool {
         self.backend.cancel_local(&operation_id.to_string())
+    }
+
+    fn prepare_cancel_reconciliation(
+        &self,
+        operation_id: &transcription_core::TranscriptionOperationId,
+    ) {
+        self.backend
+            .prepare_cancel_reconciliation(&operation_id.to_string());
     }
 
     async fn create(
@@ -385,6 +394,14 @@ impl HttpTranscriptionBackend {
         }
     }
 
+    pub fn prepare_cancel_reconciliation(&self, operation_id: &str) {
+        self.cancellations
+            .lock()
+            .expect("cancellation registry lock poisoned")
+            .pending
+            .remove(operation_id);
+    }
+
     fn register(&self, operation_id: &str) -> ActiveRequest {
         let token = CancellationToken::new();
         let active_request = ActiveRequest {
@@ -473,6 +490,11 @@ async fn parse_operation_response(
         .get(LOCATION)
         .and_then(|value| value.to_str().ok())
         .map(str::to_owned);
+    let idempotency_replayed = response
+        .headers()
+        .get(IDEMPOTENCY_REPLAYED)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value == "true");
     let no_store = response
         .headers()
         .get(CACHE_CONTROL)
@@ -497,7 +519,7 @@ async fn parse_operation_response(
                 .next()
                 .is_some_and(|media_type| media_type.trim() == expected_content_type)
         });
-    if !content_type_valid || (allowed.contains(&status) && !no_store) {
+    if !content_type_valid || !no_store {
         return Err(HttpBackendError::MalformedResponse {
             request_id: Some(request_id),
         });
@@ -530,6 +552,11 @@ async fn parse_operation_response(
             || (contract == ResponseContract::Create
                 && location.as_deref() != Some(expected_location.as_str())))
     {
+        return Err(HttpBackendError::MalformedResponse {
+            request_id: Some(request_id),
+        });
+    }
+    if status == StatusCode::OK && contract == ResponseContract::Create && !idempotency_replayed {
         return Err(HttpBackendError::MalformedResponse {
             request_id: Some(request_id),
         });
