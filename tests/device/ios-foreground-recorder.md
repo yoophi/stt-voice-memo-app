@@ -37,7 +37,7 @@ or credentials in this document or its linked evidence.
 | Rust workspace tests           | Passed  | 18 tests: recorder core 14, plugin boundary 4   |
 | Rust clippy and formatting     | Passed  | Workspace clean; vendored `swift-rs` warns only |
 | TypeScript tests/build/lint    | Passed  | 12 tests, TypeScript build, and ESLint passed   |
-| Swift coordinator tests        | Passed  | 13 tests on the connected iOS simulator         |
+| Swift coordinator tests        | Passed  | 14 tests on the connected iOS simulator         |
 | iOS simulator target compile   | Passed  | Rust/Swift plugin compiled for iOS simulator    |
 | Android Rust plugin compile    | Passed  | Safe unsupported adapter compiled for arm64     |
 | Physical Android app startup   | Not run | `adb` unavailable; physical API 24+ required    |

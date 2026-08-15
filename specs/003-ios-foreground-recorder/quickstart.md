@@ -126,8 +126,8 @@ regression has passed.
   passed.
 - Rust formatting, all 18 workspace tests, and workspace clippy passed. The
   vendored `swift-rs` dependency emitted two non-fatal upstream warnings.
-- All 13 Swift coordinator tests passed on the connected iOS simulator,
-  including start-failure cleanup and explicit cleanup retry coverage.
+- All 14 Swift coordinator tests passed on the connected iOS simulator,
+  including start/finalization-failure cleanup and explicit cleanup retry coverage.
 - Rust compiled for both `aarch64-apple-ios-sim` and `aarch64-apple-ios` with
   `IPHONEOS_DEPLOYMENT_TARGET=15.0`.
 - The recorder plugin compiled for `aarch64-linux-android`; Android startup uses

@@ -235,6 +235,33 @@ final class RecorderCoordinatorTests: XCTestCase {
         XCTAssertEqual(files.removeCount, 2)
     }
 
+    func testRepeatedCancelRetriesFinalizationFailureCleanupUntilRemoval() async throws {
+        let files = FakeRecordingFiles(
+            cleanupResults: [.pending, .removed],
+            finalizationError: RecorderPluginError(code: .finalizationFailure)
+        )
+        let coordinator = makeCoordinator(files: files)
+        _ = try await coordinator.start(sessionId: Self.sessionId)
+
+        do {
+            _ = try coordinator.stop(sessionId: Self.sessionId, reason: .userStop)
+            XCTFail("stop should fail with pending cleanup")
+        } catch let error as RecorderPluginError {
+            XCTAssertEqual(error.code, .finalizationFailure)
+            XCTAssertTrue(error.retryable)
+            XCTAssertEqual(error.cleanup, .pending)
+        }
+
+        let failedStatus = try coordinator.status(sessionId: Self.sessionId)
+        let cleanup = try coordinator.cancel(sessionId: Self.sessionId)
+        let cancelledStatus = try coordinator.status(sessionId: Self.sessionId)
+
+        XCTAssertEqual(failedStatus.state, .failed)
+        XCTAssertEqual(cleanup, .removed)
+        XCTAssertEqual(cancelledStatus.state, .cancelled)
+        XCTAssertEqual(files.removeCount, 2)
+    }
+
     func testInterruptionWinsRaceWithUserStopAndEmitsOneTerminalEvent() async throws {
         var events: [RecorderEvent] = []
         let audioSession = FakeAudioSession(permission: .granted)
@@ -405,10 +432,16 @@ private final class FakeRecorderFactory: RecorderCreating {
 @MainActor
 private final class FakeRecordingFiles: RecordingFileManaging {
     var cleanupResults: [CleanupOutcome]
+    let finalizationError: RecorderPluginError?
     var removeCount = 0
 
-    init(cleanup: CleanupOutcome = .removed, cleanupResults: [CleanupOutcome]? = nil) {
+    init(
+        cleanup: CleanupOutcome = .removed,
+        cleanupResults: [CleanupOutcome]? = nil,
+        finalizationError: RecorderPluginError? = nil
+    ) {
         self.cleanupResults = cleanupResults ?? [cleanup]
+        self.finalizationError = finalizationError
     }
 
     func prepareDestination(sessionId: String) throws -> URL {
@@ -418,7 +451,8 @@ private final class FakeRecordingFiles: RecordingFileManaging {
     func finalize(sessionId: String, url: URL, durationMs: UInt64, reason: FinalizationReason) throws
         -> NativeFinalizedRecording
     {
-        NativeFinalizedRecording(
+        if let finalizationError { throw finalizationError }
+        return NativeFinalizedRecording(
             artifactId: "c56a4180-65aa-42ec-a945-5fd21dec0538",
             sessionId: sessionId,
             fileUri: url.absoluteString,

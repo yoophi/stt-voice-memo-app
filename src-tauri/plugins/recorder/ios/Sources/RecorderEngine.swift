@@ -436,27 +436,43 @@ final class RecorderCoordinator {
             )
             return finalized
         } catch let error as RecorderPluginError {
-            let cleanup = files.remove(url: recording.destination)
-            let finalError = RecorderPluginError(
-                code: error.code,
-                retryable: error.retryable,
-                cleanup: cleanup
+            throw finalizationFailure(
+                error,
+                sessionId: sessionId,
+                destination: recording.destination,
+                reason: reason
             )
-            active = nil
-            terminals[sessionId] = .failed(finalError)
-            emit(sessionId: sessionId, state: .failed, reason: reason, cleanup: cleanup)
-            throw finalError
         } catch {
-            let cleanup = files.remove(url: recording.destination)
-            let finalError = RecorderPluginError(
-                code: .finalizationFailure,
-                cleanup: cleanup
+            throw finalizationFailure(
+                RecorderPluginError(code: .finalizationFailure),
+                sessionId: sessionId,
+                destination: recording.destination,
+                reason: reason
             )
-            active = nil
-            terminals[sessionId] = .failed(finalError)
-            emit(sessionId: sessionId, state: .failed, reason: reason, cleanup: cleanup)
-            throw finalError
         }
+    }
+
+    private func finalizationFailure(
+        _ error: RecorderPluginError,
+        sessionId: String,
+        destination: URL,
+        reason: FinalizationReason
+    ) -> RecorderPluginError {
+        let cleanup = files.remove(url: destination)
+        let cleanupRetryable = cleanup == .pending || cleanup == .failed
+        let finalError = RecorderPluginError(
+            code: error.code,
+            retryable: error.retryable || cleanupRetryable,
+            cleanup: cleanup
+        )
+        active = nil
+        if cleanupRetryable {
+            terminals[sessionId] = .cleanupPending(finalError, destination)
+        } else {
+            terminals[sessionId] = .failed(finalError)
+        }
+        emit(sessionId: sessionId, state: .failed, reason: reason, cleanup: cleanup)
+        return finalError
     }
 
     func cancel(sessionId: String) throws -> CleanupOutcome {
