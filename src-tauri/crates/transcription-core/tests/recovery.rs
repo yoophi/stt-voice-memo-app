@@ -93,7 +93,7 @@ impl OperationRepository for Repository {
             .lock()
             .unwrap()
             .values()
-            .filter(|item| !item.phase().is_terminal())
+            .filter(|item| item.needs_recovery())
             .cloned()
             .collect())
     }

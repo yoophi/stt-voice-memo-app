@@ -116,7 +116,7 @@ impl OperationRepository for LocalOperationStore {
         Ok(self
             .all()?
             .into_values()
-            .filter(|operation| operation.terminal_winner().is_none())
+            .filter(TranscriptionOperation::needs_recovery)
             .collect())
     }
 }

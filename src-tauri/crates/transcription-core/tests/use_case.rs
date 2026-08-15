@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
 
@@ -74,7 +74,7 @@ impl OperationRepository for MemoryRepository {
             .lock()
             .unwrap()
             .values()
-            .filter(|item| !item.phase().is_terminal())
+            .filter(|item| item.needs_recovery())
             .cloned()
             .collect())
     }
@@ -109,6 +109,12 @@ impl Clock for TestClock {
         100
     }
 }
+struct MutableClock(AtomicU64);
+impl Clock for MutableClock {
+    fn now_ms(&self) -> u64 {
+        self.0.load(Ordering::SeqCst)
+    }
+}
 #[derive(Default)]
 struct Events(Mutex<Vec<OperationEvent>>);
 impl OperationEventSink for Events {
@@ -120,6 +126,7 @@ impl OperationEventSink for Events {
 struct Backend {
     calls: Mutex<Vec<&'static str>>,
     state: Mutex<BackendState>,
+    delete_failure: Mutex<Option<Failure>>,
     local_cancelled: AtomicBool,
     retained_progress: Mutex<Option<Arc<dyn UploadProgressSink>>>,
 }
@@ -129,6 +136,7 @@ impl Backend {
         Self {
             calls: Mutex::new(vec![]),
             state: Mutex::new(state),
+            delete_failure: Mutex::new(None),
             local_cancelled: AtomicBool::new(false),
             retained_progress: Mutex::new(None),
         }
@@ -191,6 +199,9 @@ impl TranscriptionPort for Backend {
         request: BackendOperationRequest,
     ) -> Result<BackendOperation, TranscriptionPortError> {
         self.calls.lock().unwrap().push("delete");
+        if let Some(failure) = self.delete_failure.lock().unwrap().take() {
+            return Err(TranscriptionPortError { failure });
+        }
         let mut result = BackendOperation::active(
             request.backend_operation_id,
             SourceAudioId::parse("source-1").unwrap(),
@@ -306,9 +317,9 @@ fn authentication_required_remains_recoverable_after_token_refresh() {
         let backend = Arc::new(Backend::new(BackendState::Queued));
         let authorization = Arc::new(RefreshableAuth(AtomicBool::new(false)));
         let service = TranscriptionService::new(
-            backend,
+            backend.clone(),
             Arc::new(FixtureSource),
-            repository,
+            repository.clone(),
             authorization.clone(),
             Arc::new(Online),
             Arc::new(TestClock),
@@ -336,10 +347,11 @@ fn authentication_required_remains_recoverable_after_token_refresh() {
         assert_eq!(retried.operation.phase(), OperationPhase::Queued);
 
         authorization.0.store(false, Ordering::SeqCst);
-        let waiting_after_status = service
-            .status(retried.operation.id().clone())
-            .await
-            .unwrap();
+        assert!(matches!(
+            service.status(retried.operation.id().clone()).await,
+            Err(ApplicationError::Authorization(_))
+        ));
+        let waiting_after_status = service.recover().await.unwrap().pop().unwrap();
         assert_eq!(
             waiting_after_status.operation.phase(),
             OperationPhase::WaitingForAuthorization
@@ -354,6 +366,21 @@ fn authentication_required_remains_recoverable_after_token_refresh() {
                 .phase(),
             OperationPhase::Queued
         );
+
+        *backend.state.lock().unwrap() = BackendState::Completed;
+        let completed = service
+            .status(waiting_after_status.operation.id().clone())
+            .await
+            .unwrap();
+        assert_eq!(completed.operation.phase(), OperationPhase::Completed);
+        authorization.0.store(false, Ordering::SeqCst);
+        assert!(matches!(
+            service.status(completed.operation.id().clone()).await,
+            Err(ApplicationError::Authorization(_))
+        ));
+        let stored = repository.load(completed.operation.id()).await.unwrap();
+        assert_eq!(stored.phase(), OperationPhase::Completed);
+        assert_eq!(stored.terminal_winner(), Some(TerminalWinner::Completed));
     });
 }
 
@@ -393,16 +420,92 @@ fn terminal_failure_can_retry_unresolved_remote_cleanup_without_changing_winner(
             delete_by_ms: 1_000,
         });
         let stored = repository.get_or_create(operation).await.unwrap().operation;
-        let service = service(repository, backend.clone());
+        let events = Arc::new(Events::default());
+        let clock = Arc::new(MutableClock(AtomicU64::new(100)));
+        let service = TranscriptionService::new(
+            backend.clone(),
+            Arc::new(FixtureSource),
+            repository,
+            Arc::new(Auth),
+            Arc::new(Online),
+            clock.clone(),
+            events.clone(),
+        );
 
-        let cleaned = service.retry(stored.id().clone()).await.unwrap();
+        let cleanup_failure = Failure::new(
+            "BACKEND_UNAVAILABLE",
+            FailureCategory::Retryable,
+            Some(1_000),
+        )
+        .unwrap()
+        .with_request_id(BackendRequestId::parse("cleanup-request").unwrap());
+        *backend.delete_failure.lock().unwrap() = Some(cleanup_failure);
+
+        let failed_cleanup = service.retry(stored.id().clone()).await.unwrap();
+        assert_eq!(
+            failed_cleanup.operation.phase(),
+            OperationPhase::TerminalFailure
+        );
+        assert_eq!(
+            failed_cleanup.operation.failure().unwrap().code,
+            "INVALID_AUDIO"
+        );
+        assert_eq!(
+            failed_cleanup.operation.cleanup_failure().unwrap().code,
+            "BACKEND_UNAVAILABLE"
+        );
+        assert_eq!(
+            failed_cleanup
+                .operation
+                .backend_request_id()
+                .unwrap()
+                .to_string(),
+            "cleanup-request"
+        );
+        assert_eq!(
+            failed_cleanup
+                .operation
+                .retry()
+                .unwrap()
+                .earliest_retry_at_ms,
+            1_100
+        );
+        assert_eq!(
+            events
+                .0
+                .lock()
+                .unwrap()
+                .last()
+                .unwrap()
+                .failure_code
+                .as_deref(),
+            Some("BACKEND_UNAVAILABLE")
+        );
+        assert_eq!(service.recover().await.unwrap().len(), 1);
+
+        let waiting = service
+            .retry(failed_cleanup.operation.id().clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            waiting.operation.cleanup_failure(),
+            failed_cleanup.operation.cleanup_failure()
+        );
+        assert_eq!(backend.calls.lock().unwrap().as_slice(), ["delete"]);
+
+        clock.0.store(1_100, Ordering::SeqCst);
+        let cleaned = service.retry(waiting.operation.id().clone()).await.unwrap();
         assert_eq!(cleaned.operation.phase(), OperationPhase::TerminalFailure);
         assert_eq!(
             cleaned.operation.terminal_winner(),
             Some(TerminalWinner::TerminalFailure)
         );
         assert_eq!(cleaned.operation.cleanup(), &CleanupDisposition::Completed);
-        assert_eq!(backend.calls.lock().unwrap().as_slice(), ["delete"]);
+        assert!(cleaned.operation.cleanup_failure().is_none());
+        assert_eq!(
+            backend.calls.lock().unwrap().as_slice(),
+            ["delete", "delete"]
+        );
     });
 }
 

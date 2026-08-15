@@ -122,6 +122,22 @@ async fn get_and_delete_use_exact_resource_path() {
     let delete_request = String::from_utf8_lossy(&delete_request.join().unwrap()).to_string();
     assert!(delete_request.starts_with("DELETE /v1/transcriptions/backend-operation HTTP/1.1\r\n"));
 
+    let (delete_url, delete_request) = spawn_server(
+        "204 No Content",
+        &[
+            ("X-Request-Id", "request-delete"),
+            ("Test-Omit-Cache-Control", "true"),
+        ],
+        &[],
+        Duration::ZERO,
+    );
+    let error = backend(delete_url, Duration::from_secs(2))
+        .delete(OPERATION_ID, "backend-operation", &token)
+        .await
+        .unwrap_err();
+    delete_request.join().unwrap();
+    assert!(matches!(error, HttpBackendError::MalformedResponse { .. }));
+
     let deleting_body = operation_json("deleting", None);
     let (delete_url, delete_request) = spawn_server(
         "202 Accepted",

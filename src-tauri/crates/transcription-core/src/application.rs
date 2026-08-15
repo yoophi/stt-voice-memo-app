@@ -117,7 +117,7 @@ impl TranscriptionService {
         &self,
         operation_id: TranscriptionOperationId,
     ) -> Result<OperationOutcome, ApplicationError> {
-        let mut current = self.operations.load(&operation_id).await?;
+        let current = self.operations.load(&operation_id).await?;
         if matches!(
             current.phase(),
             OperationPhase::Cancelled | OperationPhase::TerminalFailure
@@ -129,14 +129,7 @@ impl TranscriptionService {
         };
         let authorization = match self.authorization.acquire().await {
             Ok(authorization) => authorization,
-            Err(_) => {
-                current.mark_waiting_for_authorization(Failure::new(
-                    "AUTHENTICATION_REQUIRED",
-                    FailureCategory::UserActionable,
-                    None,
-                )?)?;
-                return Ok(OperationOutcome::operation(self.commit(current).await?));
-            }
+            Err(error) => return self.wait_for_authorization(current, error).await,
         };
         match self
             .backend
@@ -162,6 +155,9 @@ impl TranscriptionService {
             OperationPhase::TerminalFailure
                 if current.cleanup().needs_retry() && current.backend_operation_id().is_some() =>
             {
+                if !current.terminal_cleanup_retry_ready(self.clock.now_ms()) {
+                    return Ok(OperationOutcome::operation(current));
+                }
                 return self.dispatch_terminal_cleanup(current).await;
             }
             OperationPhase::Completed
@@ -283,16 +279,7 @@ impl TranscriptionService {
 
         let authorization = match self.authorization.acquire().await {
             Ok(token) => token,
-            Err(error) => {
-                let failure = Failure::new(
-                    "AUTHENTICATION_REQUIRED",
-                    FailureCategory::UserActionable,
-                    None,
-                )?;
-                operation.mark_waiting_for_authorization(failure)?;
-                let _ = self.commit(operation).await?;
-                return Err(ApplicationError::Authorization(error));
-            }
+            Err(error) => return self.wait_for_authorization(operation, error).await,
         };
         let latest = self.operations.load(operation.id()).await?;
         if (latest.cancel_requested() || latest.phase() == OperationPhase::Cancelling)
@@ -372,7 +359,21 @@ impl TranscriptionService {
             .backend_operation_id()
             .cloned()
             .ok_or(DomainError::MissingBackendOperationId)?;
-        let authorization = self.authorization.acquire().await?;
+        let authorization = match self.authorization.acquire().await {
+            Ok(authorization) => authorization,
+            Err(error) => {
+                operation.record_terminal_cleanup_failure(
+                    Failure::new(
+                        "AUTHENTICATION_REQUIRED",
+                        FailureCategory::UserActionable,
+                        None,
+                    )?,
+                    self.clock.now_ms(),
+                )?;
+                let _ = self.commit(operation).await?;
+                return Err(ApplicationError::Authorization(error));
+            }
+        };
         let remote = match self
             .backend
             .delete(BackendOperationRequest {
@@ -384,7 +385,10 @@ impl TranscriptionService {
             .await
         {
             Ok(remote) => remote,
-            Err(_) => return Ok(OperationOutcome::operation(operation)),
+            Err(error) => {
+                operation.record_terminal_cleanup_failure(error.failure, self.clock.now_ms())?;
+                return Ok(OperationOutcome::operation(self.commit(operation).await?));
+            }
         };
         if remote.id != backend_operation_id
             || remote.source_audio_id != *operation.source_audio_id()
@@ -393,6 +397,22 @@ impl TranscriptionService {
         }
         operation.set_cleanup(remote.cleanup);
         Ok(OperationOutcome::operation(self.commit(operation).await?))
+    }
+
+    async fn wait_for_authorization(
+        &self,
+        mut operation: TranscriptionOperation,
+        error: AuthorizationError,
+    ) -> Result<OperationOutcome, ApplicationError> {
+        if operation.terminal_winner().is_none() {
+            operation.mark_waiting_for_authorization(Failure::new(
+                "AUTHENTICATION_REQUIRED",
+                FailureCategory::UserActionable,
+                None,
+            )?)?;
+            let _ = self.commit(operation).await?;
+        }
+        Err(ApplicationError::Authorization(error))
     }
 
     async fn apply_port_failure(
@@ -605,7 +625,10 @@ impl TranscriptionService {
             attempt: operation.attempt(),
             phase: operation.phase(),
             progress_basis_points,
-            failure_code: operation.failure().map(|failure| failure.code.clone()),
+            failure_code: operation
+                .cleanup_failure()
+                .or_else(|| operation.failure())
+                .map(|failure| failure.code.clone()),
             retry_at_ms: operation
                 .retry()
                 .map(|retry| retry.earliest_retry_at_ms)

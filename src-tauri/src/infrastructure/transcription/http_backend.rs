@@ -364,7 +364,12 @@ impl HttpTranscriptionBackend {
             .await
             .map_err(map_reqwest_error)?;
         if response.status() == StatusCode::NO_CONTENT {
-            ensure_request_id(response.headers())?;
+            let request_id = ensure_request_id(response.headers())?.to_owned();
+            if !has_no_store(response.headers()) {
+                return Err(HttpBackendError::MalformedResponse {
+                    request_id: Some(request_id),
+                });
+            }
             return Ok(None);
         }
         parse_operation_response(response, &[StatusCode::ACCEPTED], ResponseContract::Delete)
@@ -491,15 +496,7 @@ async fn parse_operation_response(
         .get(IDEMPOTENCY_REPLAYED)
         .and_then(|value| value.to_str().ok())
         .is_some_and(|value| value == "true");
-    let no_store = response
-        .headers()
-        .get(CACHE_CONTROL)
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| {
-            value
-                .split(',')
-                .any(|directive| directive.trim().eq_ignore_ascii_case("no-store"))
-        });
+    let no_store = has_no_store(response.headers());
     let expected_content_type = if allowed.contains(&status) {
         "application/json"
     } else {
@@ -592,6 +589,17 @@ async fn parse_operation_response(
     }
     operation.retry_after_seconds = retry_after_seconds;
     Ok(operation)
+}
+
+fn has_no_store(headers: &HeaderMap) -> bool {
+    headers
+        .get(CACHE_CONTROL)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| {
+            value
+                .split(',')
+                .any(|directive| directive.trim().eq_ignore_ascii_case("no-store"))
+        })
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]

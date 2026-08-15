@@ -374,6 +374,8 @@ pub struct TranscriptionOperation {
     progress: Option<UploadObservation>,
     terminal_winner: Option<TerminalWinner>,
     failure: Option<Failure>,
+    #[serde(default)]
+    cleanup_failure: Option<Failure>,
     retry: Option<RetryMetadata>,
     #[serde(default)]
     poll_at_ms: Option<u64>,
@@ -403,6 +405,7 @@ impl TranscriptionOperation {
             progress: None,
             terminal_winner: None,
             failure: None,
+            cleanup_failure: None,
             retry: None,
             poll_at_ms: None,
             cleanup: CleanupDisposition::NotScheduled,
@@ -443,6 +446,9 @@ impl TranscriptionOperation {
     pub fn failure(&self) -> Option<&Failure> {
         self.failure.as_ref()
     }
+    pub fn cleanup_failure(&self) -> Option<&Failure> {
+        self.cleanup_failure.as_ref()
+    }
     pub fn retry(&self) -> Option<&RetryMetadata> {
         self.retry.as_ref()
     }
@@ -463,6 +469,9 @@ impl TranscriptionOperation {
     }
     pub fn cancel_requested(&self) -> bool {
         self.cancel_requested
+    }
+    pub fn needs_recovery(&self) -> bool {
+        self.terminal_winner.is_none() || self.cleanup.needs_retry()
     }
 
     pub fn set_revision(&mut self, revision: u64) {
@@ -670,6 +679,35 @@ impl TranscriptionOperation {
 
     pub fn set_cleanup(&mut self, cleanup: CleanupDisposition) {
         self.cleanup = cleanup;
+        if !self.cleanup.needs_retry() {
+            self.cleanup_failure = None;
+            self.retry = None;
+        }
+    }
+
+    pub fn record_terminal_cleanup_failure(
+        &mut self,
+        failure: Failure,
+        now_ms: u64,
+    ) -> Result<(), DomainError> {
+        if self.terminal_winner != Some(TerminalWinner::TerminalFailure)
+            || !self.cleanup.needs_retry()
+        {
+            return Err(DomainError::InvalidTransition);
+        }
+        self.backend_request_id = failure.request_id.clone();
+        self.retry = Some(RetryMetadata {
+            earliest_retry_at_ms: now_ms.saturating_add(failure.retry_after_ms.unwrap_or(0)),
+            max_attempts: 5,
+        });
+        self.cleanup_failure = Some(failure);
+        Ok(())
+    }
+
+    pub fn terminal_cleanup_retry_ready(&self, now_ms: u64) -> bool {
+        self.retry
+            .as_ref()
+            .is_none_or(|retry| now_ms >= retry.earliest_retry_at_ms)
     }
 
     pub fn recover_interrupted_upload(&mut self) -> bool {

@@ -156,11 +156,14 @@ impl OperationView {
                 supplied_bytes: progress.supplied_bytes,
                 total_bytes: progress.total_bytes,
             }),
-            failure: operation.failure().map(|failure| FailureView {
-                code: failure.code.clone(),
-                category: failure.category,
-                retryable: failure.retryable,
-            }),
+            failure: operation
+                .cleanup_failure()
+                .or_else(|| operation.failure())
+                .map(|failure| FailureView {
+                    code: failure.code.clone(),
+                    category: failure.category,
+                    retryable: failure.retryable,
+                }),
             retry_at_ms: operation
                 .retry()
                 .map(|retry| retry.earliest_retry_at_ms)
