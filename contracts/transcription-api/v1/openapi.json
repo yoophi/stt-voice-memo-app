@@ -203,10 +203,49 @@
             "$ref": "#/components/responses/UnsupportedAudio"
           },
           "422": {
-            "$ref": "#/components/responses/IdempotencyMismatch"
+            "description": "The request is well-formed but fails semantic validation.",
+            "headers": {
+              "Cache-Control": { "$ref": "#/components/headers/CacheControl" },
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": { "$ref": "#/components/schemas/Problem" },
+                "examples": {
+                  "audioDurationExceeded": {
+                    "$ref": "#/components/examples/AudioDurationExceeded"
+                  },
+                  "invalidLanguageHint": {
+                    "$ref": "#/components/examples/InvalidLanguageHint"
+                  },
+                  "checksumMismatch": {
+                    "$ref": "#/components/examples/ChecksumMismatch"
+                  },
+                  "idempotencyMismatch": {
+                    "$ref": "#/components/examples/IdempotencyMismatch"
+                  }
+                }
+              }
+            }
           },
           "429": {
-            "$ref": "#/components/responses/RateLimited"
+            "description": "A temporary request rate or account usage limit was exceeded.",
+            "headers": {
+              "Retry-After": { "$ref": "#/components/headers/RetryAfter" },
+              "Cache-Control": { "$ref": "#/components/headers/CacheControl" },
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": { "$ref": "#/components/schemas/Problem" },
+                "examples": {
+                  "rateLimited": { "$ref": "#/components/examples/RateLimited" },
+                  "usageLimitExceeded": {
+                    "$ref": "#/components/examples/UsageLimitExceeded"
+                  }
+                }
+              }
+            }
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
@@ -304,13 +343,20 @@
                   },
                   "deleting": {
                     "$ref": "#/components/examples/DeletingOperation"
+                  },
+                  "cleanupRetrying": {
+                    "$ref": "#/components/examples/CleanupRetryingOperation"
                   }
                 }
               }
             }
           },
           "204": {
-            "description": "Sensitive content is absent; repeated deletion is complete."
+            "description": "Sensitive content is absent; repeated deletion is complete.",
+            "headers": {
+              "Cache-Control": { "$ref": "#/components/headers/CacheControl" },
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+            }
           },
           "401": {
             "$ref": "#/components/responses/AuthenticationRequired"
@@ -481,7 +527,7 @@
         "type": "string",
         "enum": ["retryable", "user_actionable", "terminal", "uncertain"]
       },
-      "Problem": {
+      "ProblemBase": {
         "type": "object",
         "required": ["type", "title", "status", "code", "category", "retryable", "request_id"],
         "properties": {
@@ -497,6 +543,152 @@
           "retry_after_seconds": { "type": "integer", "minimum": 0 }
         },
         "additionalProperties": false
+      },
+      "FailureTuple": {
+        "oneOf": [
+          {
+            "properties": {
+              "status": { "const": 400 },
+              "code": { "const": "MALFORMED_REQUEST" },
+              "category": { "const": "terminal" },
+              "retryable": { "const": false }
+            }
+          },
+          {
+            "properties": {
+              "status": { "const": 401 },
+              "code": { "const": "AUTHENTICATION_REQUIRED" },
+              "category": { "const": "user_actionable" },
+              "retryable": { "const": false }
+            }
+          },
+          {
+            "properties": {
+              "status": { "const": 403 },
+              "code": { "const": "FEATURE_NOT_ALLOWED" },
+              "category": { "const": "user_actionable" },
+              "retryable": { "const": false }
+            }
+          },
+          {
+            "properties": {
+              "status": { "const": 404 },
+              "code": { "const": "OPERATION_NOT_FOUND" },
+              "category": { "const": "terminal" },
+              "retryable": { "const": false }
+            }
+          },
+          {
+            "properties": {
+              "status": { "const": 409 },
+              "code": { "const": "OPERATION_CONFLICT" },
+              "category": { "const": "uncertain" },
+              "retryable": { "const": false }
+            }
+          },
+          {
+            "properties": {
+              "status": { "const": 410 },
+              "code": { "const": "CONTENT_EXPIRED" },
+              "category": { "const": "terminal" },
+              "retryable": { "const": false }
+            }
+          },
+          {
+            "properties": {
+              "status": { "const": 413 },
+              "code": { "const": "AUDIO_TOO_LARGE" },
+              "category": { "const": "user_actionable" },
+              "retryable": { "const": false }
+            }
+          },
+          {
+            "properties": {
+              "status": { "const": 415 },
+              "code": { "const": "UNSUPPORTED_AUDIO" },
+              "category": { "const": "user_actionable" },
+              "retryable": { "const": false }
+            }
+          },
+          {
+            "properties": {
+              "status": { "const": 422 },
+              "code": { "const": "AUDIO_DURATION_EXCEEDED" },
+              "category": { "const": "user_actionable" },
+              "retryable": { "const": false }
+            }
+          },
+          {
+            "properties": {
+              "status": { "const": 422 },
+              "code": { "const": "INVALID_LANGUAGE_HINT" },
+              "category": { "const": "user_actionable" },
+              "retryable": { "const": false }
+            }
+          },
+          {
+            "properties": {
+              "status": { "const": 422 },
+              "code": { "const": "CHECKSUM_MISMATCH" },
+              "category": { "const": "terminal" },
+              "retryable": { "const": false }
+            }
+          },
+          {
+            "properties": {
+              "status": { "const": 422 },
+              "code": { "const": "IDEMPOTENCY_MISMATCH" },
+              "category": { "const": "terminal" },
+              "retryable": { "const": false }
+            }
+          },
+          {
+            "properties": {
+              "status": { "const": 429 },
+              "code": { "const": "RATE_LIMITED" },
+              "category": { "const": "retryable" },
+              "retryable": { "const": true }
+            }
+          },
+          {
+            "properties": {
+              "status": { "const": 429 },
+              "code": { "const": "USAGE_LIMIT_EXCEEDED" },
+              "category": { "const": "user_actionable" },
+              "retryable": { "const": false }
+            }
+          },
+          {
+            "properties": {
+              "status": { "const": 500 },
+              "code": { "const": "INTERNAL_ERROR" },
+              "category": { "const": "uncertain" },
+              "retryable": { "const": false }
+            }
+          },
+          {
+            "properties": {
+              "status": { "const": 503 },
+              "code": { "const": "PROVIDER_UNAVAILABLE" },
+              "category": { "const": "retryable" },
+              "retryable": { "const": true }
+            }
+          },
+          {
+            "properties": {
+              "status": { "const": 504 },
+              "code": { "const": "PROCESSING_TIMEOUT" },
+              "category": { "const": "uncertain" },
+              "retryable": { "const": false }
+            }
+          }
+        ]
+      },
+      "Problem": {
+        "allOf": [
+          { "$ref": "#/components/schemas/ProblemBase" },
+          { "$ref": "#/components/schemas/FailureTuple" }
+        ]
       },
       "OperationState": {
         "type": "string",
@@ -529,6 +721,7 @@
           "retryable": { "type": "boolean" },
           "retry_after_seconds": { "type": "integer", "minimum": 0 }
         },
+        "allOf": [{ "$ref": "#/components/schemas/FailureTuple" }],
         "additionalProperties": false
       },
       "CleanupStatus": {
@@ -855,6 +1048,20 @@
           "created_at": "2026-08-15T02:00:00Z",
           "updated_at": "2026-08-15T02:00:06Z",
           "cleanup": { "state": "in_progress", "content_available": false },
+          "links": {
+            "self": "/v1/transcriptions/trn_01HZY8NQ4F7J9E2K3M5P6R8T0V"
+          }
+        }
+      },
+      "CleanupRetryingOperation": {
+        "value": {
+          "id": "trn_01HZY8NQ4F7J9E2K3M5P6R8T0V",
+          "request_id": "req_01HZY8PJ4F7J9E2K3M5P6R8T0V",
+          "source_audio_id": "aud_01HZY8MZ4F7J9E2K3M5P6R8T0V",
+          "state": "deleting",
+          "created_at": "2026-08-15T02:00:00Z",
+          "updated_at": "2026-08-15T02:00:08Z",
+          "cleanup": { "state": "failed_retrying", "content_available": false },
           "links": {
             "self": "/v1/transcriptions/trn_01HZY8NQ4F7J9E2K3M5P6R8T0V"
           }

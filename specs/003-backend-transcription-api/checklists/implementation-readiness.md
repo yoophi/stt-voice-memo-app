@@ -46,8 +46,8 @@ claims remain downstream conformance evidence.
 
 ## Automated validation
 
-- [x] Focused contract test — 1 file, 9 tests passed
-- [x] Full Vitest suite — 3 files, 15 tests passed
+- [x] Focused contract test — 1 file, 16 tests passed
+- [x] Full Vitest suite — 2 files, 18 tests passed
 - [x] ESLint — passed with no findings
 - [x] Prettier check — all selected files conform
 - [x] Frontend production build — TypeScript and Vite build passed
@@ -62,3 +62,15 @@ claims remain downstream conformance evidence.
 - [x] User-owned untracked `.wtp.yml` remains untouched.
 - [x] No OpenAI call, network call, API key, backend token, or real audio fixture
       was required.
+
+## PR review follow-up
+
+- [x] POST 422 and 429 responses directly reference every same-status example.
+- [x] A test-only public contract double proves 100 concurrent matching submits
+      dispatch once, changed fingerprints do not redispatch, and auth/ownership/rate/
+      concurrency/daily-usage rejections happen before provider dispatch.
+- [x] DELETE 204 includes `X-Request-Id` and `Cache-Control` headers.
+- [x] The shared `FailureTuple` `oneOf` constrains every code/status/category/
+      retryable combination for both RFC 9457 problems and operation failures.
+- [x] `failed_retrying` cleanup is represented by a linked DELETE example and a
+      lifecycle assertion.

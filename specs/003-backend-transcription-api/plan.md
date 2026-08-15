@@ -104,7 +104,9 @@ contracts/
         └── openapi.json
 
 scripts/
-└── backend-transcription-api-contract.test.mjs
+├── backend-transcription-api-contract.test.mjs
+└── support/
+    └── backend-transcription-contract-double.mjs
 ```
 
 ### Future source ownership (not implemented by Issue #3)

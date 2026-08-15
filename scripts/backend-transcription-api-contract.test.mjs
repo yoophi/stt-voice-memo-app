@@ -4,10 +4,34 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, test } from "vitest";
 
+import { createTranscriptionContractDouble } from "./support/backend-transcription-contract-double.mjs";
+
 const repositoryRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const contractPath = join(repositoryRoot, "contracts/transcription-api/v1/openapi.json");
 
 const readContract = () => JSON.parse(readFileSync(contractPath, "utf8"));
+
+const createContractHarness = ({
+  contract = readContract(),
+  transcribe = () => ({ text: "Synthetic result" }),
+} = {}) => {
+  const provider = {
+    dispatchCount: 0,
+    async transcribe(request) {
+      this.dispatchCount += 1;
+      return transcribe({ dispatchCount: this.dispatchCount, request });
+    },
+  };
+
+  return {
+    contract,
+    provider,
+    boundary: createTranscriptionContractDouble({
+      provider,
+      policy: contract["x-contract-policy"],
+    }),
+  };
+};
 
 const resolveLocalReference = (document, reference) => {
   expect(reference.startsWith("#/"), `external reference: ${reference}`).toBe(true);
@@ -33,6 +57,183 @@ const collectReferences = (value, references = []) => {
 };
 
 describe("backend transcription API contract", () => {
+  test("concurrent matching submissions dispatch one provider operation", async () => {
+    const { boundary, provider } = createContractHarness();
+    const submission = {
+      bearerPrincipal: "user-1",
+      idempotencyKey: "idem-key-for-recording-0001",
+      fingerprint: "sha256:recording-0001",
+      sourceAudioId: "audio-1",
+    };
+
+    const responses = await Promise.all(
+      Array.from({ length: 100 }, () => boundary.submit(submission)),
+    );
+    const completed = await boundary.read({
+      bearerPrincipal: submission.bearerPrincipal,
+      operationId: responses[0].body.id,
+    });
+
+    expect(new Set(responses.map((response) => response.body.id)).size).toBe(1);
+    expect(responses.every((response) => response.status === 202)).toBe(true);
+    expect(responses.every((response) => response.body.result === undefined)).toBe(true);
+    expect(completed.body).toMatchObject({
+      state: "completed",
+      result: { text: "Synthetic result" },
+    });
+    expect(provider.dispatchCount).toBe(1);
+  });
+
+  test("changed content under the same key is rejected before provider dispatch", async () => {
+    const { boundary, provider } = createContractHarness();
+    const original = {
+      bearerPrincipal: "user-1",
+      idempotencyKey: "idem-key-for-recording-0001",
+      fingerprint: "sha256:recording-0001",
+      sourceAudioId: "audio-1",
+    };
+
+    await boundary.submit(original);
+    const conflict = await boundary.submit({
+      ...original,
+      fingerprint: "sha256:different-recording",
+    });
+
+    expect(conflict).toMatchObject({
+      status: 422,
+      body: { code: "IDEMPOTENCY_MISMATCH", category: "terminal", retryable: false },
+    });
+    expect(provider.dispatchCount).toBe(1);
+  });
+
+  test("missing authentication is rejected before provider dispatch", async () => {
+    const { boundary, provider } = createContractHarness();
+
+    const response = await boundary.submit({
+      bearerPrincipal: null,
+      idempotencyKey: "idem-key-for-recording-0001",
+      fingerprint: "sha256:recording-0001",
+      sourceAudioId: "audio-1",
+    });
+
+    expect(response).toMatchObject({
+      status: 401,
+      body: { code: "AUTHENTICATION_REQUIRED", category: "user_actionable", retryable: false },
+    });
+    expect(provider.dispatchCount).toBe(0);
+  });
+
+  test("daily usage rejection happens before provider dispatch", async () => {
+    const { boundary, provider } = createContractHarness();
+
+    const response = await boundary.submit({
+      bearerPrincipal: "user-1",
+      idempotencyKey: "idem-key-for-recording-0001",
+      fingerprint: "sha256:recording-0001",
+      sourceAudioId: "audio-1",
+      dailyUsageAllowed: false,
+    });
+
+    expect(response).toMatchObject({
+      status: 429,
+      body: { code: "USAGE_LIMIT_EXCEEDED", category: "user_actionable", retryable: false },
+    });
+    expect(provider.dispatchCount).toBe(0);
+  });
+
+  test("rolling create limit rejects excess work before provider dispatch", async () => {
+    const contract = readContract();
+    const { boundary, provider } = createContractHarness({ contract });
+    const limit = contract["x-contract-policy"].limits.create_per_rolling_minute;
+
+    for (let index = 0; index < limit; index += 1) {
+      const accepted = await boundary.submit({
+        bearerPrincipal: "user-1",
+        idempotencyKey: `idem-key-for-recording-${String(index).padStart(4, "0")}`,
+        fingerprint: `sha256:recording-${index}`,
+        sourceAudioId: `audio-${index}`,
+      });
+      expect(accepted.status).toBe(202);
+    }
+
+    const limited = await boundary.submit({
+      bearerPrincipal: "user-1",
+      idempotencyKey: "idem-key-for-recording-over-limit",
+      fingerprint: "sha256:over-limit",
+      sourceAudioId: "audio-over-limit",
+    });
+
+    expect(limited).toMatchObject({
+      status: 429,
+      body: { code: "RATE_LIMITED", category: "retryable", retryable: true },
+    });
+    expect(provider.dispatchCount).toBe(limit);
+  });
+
+  test("unknown and cross-owner reads are indistinguishable", async () => {
+    const { boundary } = createContractHarness();
+    const accepted = await boundary.submit({
+      bearerPrincipal: "user-1",
+      idempotencyKey: "idem-key-for-recording-0001",
+      fingerprint: "sha256:recording-0001",
+      sourceAudioId: "audio-1",
+    });
+
+    const crossOwner = await boundary.read({
+      bearerPrincipal: "user-2",
+      operationId: accepted.body.id,
+    });
+    const unknown = await boundary.read({
+      bearerPrincipal: "user-2",
+      operationId: "unknown-operation",
+    });
+
+    expect(crossOwner).toEqual(unknown);
+    expect(unknown).toMatchObject({
+      status: 404,
+      body: { code: "OPERATION_NOT_FOUND", category: "terminal", retryable: false },
+    });
+  });
+
+  test("active operation limit rejects excess work before provider dispatch", async () => {
+    const contract = readContract();
+    const pendingResolvers = [];
+    const { boundary, provider } = createContractHarness({
+      contract,
+      transcribe({ dispatchCount }) {
+        if (dispatchCount <= contract["x-contract-policy"].limits.active_operations_per_user) {
+          return new Promise((resolve) => pendingResolvers.push(resolve));
+        }
+        return { text: "Unexpected dispatch" };
+      },
+    });
+    const activeLimit = contract["x-contract-policy"].limits.active_operations_per_user;
+    const active = Array.from({ length: activeLimit }, (_, index) =>
+      boundary.submit({
+        bearerPrincipal: "user-1",
+        idempotencyKey: `idem-key-for-active-recording-${index}`,
+        fingerprint: `sha256:active-recording-${index}`,
+        sourceAudioId: `active-audio-${index}`,
+      }),
+    );
+
+    const limited = await boundary.submit({
+      bearerPrincipal: "user-1",
+      idempotencyKey: "idem-key-for-active-recording-over-limit",
+      fingerprint: "sha256:active-over-limit",
+      sourceAudioId: "active-audio-over-limit",
+    });
+
+    expect(limited).toMatchObject({
+      status: 429,
+      body: { code: "RATE_LIMITED", category: "retryable", retryable: true },
+    });
+    expect(provider.dispatchCount).toBe(activeLimit);
+
+    for (const resolve of pendingResolvers) resolve({ text: "Synthetic result" });
+    await Promise.all(active);
+  });
+
   test("publishes a parseable OpenAPI 3.1.1 artifact with local references", () => {
     expect(existsSync(contractPath)).toBe(true);
 
@@ -128,7 +329,7 @@ describe("backend transcription API contract", () => {
 
   test("uses typed problem details for every recovery error", () => {
     const contract = readContract();
-    const problem = contract.components.schemas.Problem;
+    const problem = contract.components.schemas.ProblemBase;
     const categories = contract.components.schemas.ProblemCategory.enum;
     const expected = {
       OperationConflict: [409, "OPERATION_CONFLICT", "uncertain", false],
@@ -177,6 +378,7 @@ describe("backend transcription API contract", () => {
       "#/components/schemas/TranscriptionOperation",
     );
     expect(remove.responses["204"].content).toBeUndefined();
+    expect(remove.responses["204"].headers["X-Request-Id"]).toBeDefined();
     expect(cancellation).toMatchObject({
       invalidates_queued_or_processing_work: true,
       late_provider_result: "discard",
@@ -191,6 +393,10 @@ describe("backend transcription API contract", () => {
     ]) {
       expect(contract.components.examples[name]).toBeDefined();
     }
+    expect(contract.components.examples.CleanupRetryingOperation.value).toMatchObject({
+      state: "deleting",
+      cleanup: { state: "failed_retrying", content_available: false },
+    });
   });
 
   test("enumerates every validation, ownership, and usage error", () => {
@@ -222,7 +428,27 @@ describe("backend transcription API contract", () => {
         category,
         retryable,
       });
+
+      const variant = contract.components.schemas.FailureTuple.oneOf.find(
+        (candidate) => candidate.properties.code.const === code,
+      );
+      expect(variant.properties).toMatchObject({
+        status: { const: status },
+        code: { const: code },
+        category: { const: category },
+        retryable: { const: retryable },
+      });
     }
+
+    expect(contract.components.schemas.FailureTuple.oneOf).toHaveLength(
+      Object.keys(expected).length,
+    );
+    expect(contract.components.schemas.Problem.allOf).toEqual(
+      expect.arrayContaining([{ $ref: "#/components/schemas/FailureTuple" }]),
+    );
+    expect(contract.components.schemas.OperationFailure.allOf).toEqual([
+      { $ref: "#/components/schemas/FailureTuple" },
+    ]);
 
     const createResponses = contract.paths["/v1/transcriptions"].post.responses;
     expect(Object.keys(createResponses)).toEqual(
@@ -230,6 +456,20 @@ describe("backend transcription API contract", () => {
     );
     expect(contract["x-contract-policy"].ownership.non_owner_status).toBe(404);
     expect(contract["x-contract-policy"].ownership.unknown_status).toBe(404);
+
+    const semanticExamples = createResponses["422"].content["application/problem+json"].examples;
+    expect(Object.keys(semanticExamples)).toEqual(
+      expect.arrayContaining([
+        "audioDurationExceeded",
+        "invalidLanguageHint",
+        "checksumMismatch",
+        "idempotencyMismatch",
+      ]),
+    );
+    const limitExamples = createResponses["429"].content["application/problem+json"].examples;
+    expect(Object.keys(limitExamples)).toEqual(
+      expect.arrayContaining(["rateLimited", "usageLimitExceeded"]),
+    );
   });
 
   test("makes limits, retention, logging, and provider isolation executable", () => {

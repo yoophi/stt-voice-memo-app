@@ -19,7 +19,10 @@ pnpm exec vitest run scripts/backend-transcription-api-contract.test.mjs
 ```
 
 Expected: the contract parses, all local references resolve, and success,
-recovery, security, privacy, and error-catalog assertions pass.
+recovery, security, privacy, and error-catalog assertions pass. The test-only
+contract double also proves concurrent replay, conflict, authentication,
+ownership, create-rate, active-operation, and daily-usage behavior without a
+network or provider call.
 
 ## Full repository regression
 
