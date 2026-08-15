@@ -166,6 +166,7 @@ Handy는 로컬 음성 인식 중심의 데스크톱 애플리케이션인 반�
 - [`docs/handy-mobile-code-reuse.md`](docs/handy-mobile-code-reuse.md): Handy 오디오 처리 코드의 모바일 재사용 가능성 분석
 - [`docs/ios-simulator-xcode-27-troubleshooting.md`](docs/ios-simulator-xcode-27-troubleshooting.md): Xcode 27에서 Tauri iOS Simulator 빌드·실행 문제와 해결 기록
 - [`docs/monorepo-workspace.md`](docs/monorepo-workspace.md): 모바일·백엔드·계약 워크스페이스 소유권, 명령, 설정 및 CI 경계
+- [`docs/android-tauri-host.md`](docs/android-tauri-host.md): API 24+ Android Tauri 호스트, 최소 capability, 빌드 및 문제 해결
 
 ## 개발 환경
 
@@ -180,12 +181,14 @@ pnpm dev:mobile
 pnpm validate:mobile
 pnpm validate:backend
 pnpm validate:contract
+pnpm validate:android-host
+pnpm build:android
 pnpm validate
 ```
 
 `pnpm dev:backend`는 후속 이슈가 백엔드 런타임을 구현하기 전까지 명시적인
 unavailable 결과로 종료됩니다. iOS 명령은 저장소 루트에서 `pnpm tauri ios
-...` 형태로 실행합니다. `pnpm tauri android ...` 루트 CLI facade도 이미
-존재하지만 Android 호스트와 build 경로는 아직 unavailable입니다. Issue
-#24가 최소 Android 호스트를 초기화해 이 기존 facade를 실행 가능한 상태로
-만들며, 그 전까지 Android 경로 검사는 unavailable로 보고됩니다.
+...` 형태로 실행합니다. Android 호스트는 `src-tauri/gen/android`에 추적되며,
+`pnpm validate:android-host`로 최소 capability와 toolchain을 확인하고
+`pnpm build:android`로 bundled ARM64 debug APK를 생성합니다. 실기기 설치와
+cold-launch 검증은 GitHub Issue #23에서 수행합니다.

@@ -1,4 +1,4 @@
-import { access, readFile, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { describe, expect, test } from "vitest";
@@ -10,6 +10,28 @@ const repositoryRoot = resolve(import.meta.dirname, "../..");
 
 async function readRepositoryFile(path) {
   return readFile(resolve(repositoryRoot, path), "utf8");
+}
+
+async function createMobileFixture(directory) {
+  await mkdir(resolve(directory, "src-tauri/gen"), { recursive: true });
+  await cp(
+    resolve(repositoryRoot, "src-tauri/Cargo.toml"),
+    resolve(directory, "src-tauri/Cargo.toml"),
+  );
+  await cp(
+    resolve(repositoryRoot, "src-tauri/tauri.conf.json"),
+    resolve(directory, "src-tauri/tauri.conf.json"),
+  );
+  await cp(
+    resolve(repositoryRoot, "src-tauri/gen/android"),
+    resolve(directory, "src-tauri/gen/android"),
+    {
+      recursive: true,
+    },
+  );
+  await mkdir(resolve(directory, "src-tauri/gen/apple/stt-voice-memo-app.xcodeproj"), {
+    recursive: true,
+  });
 }
 
 describe("workspace foundation", () => {
@@ -49,7 +71,7 @@ describe("workspace foundation", () => {
     expect(classifyOwnedPath("unexpected/new-root.txt")).toBe("unknown");
   });
 
-  test("reports the Apple project as verified and the Android host honestly", async () => {
+  test("reports the Apple and complete Android hosts as verified", async () => {
     await expect(
       access(resolve(repositoryRoot, "src-tauri/gen/apple/stt-voice-memo-app.xcodeproj")),
     ).resolves.toBeUndefined();
@@ -61,8 +83,146 @@ describe("workspace foundation", () => {
     const result = await runNode("scripts/workspace/check-mobile-paths.mjs");
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("apple=verified");
-    expect(result.stdout).toContain("android=unavailable");
-    expect(result.stdout).toContain("owner=issue-24");
+    expect(result.stdout).toContain("android=verified");
+  });
+
+  test("fails closed for a partial Android host", async () => {
+    await withTemporaryDirectory("stt-mobile-partial-", async (directory) => {
+      await createMobileFixture(directory);
+      await rm(resolve(directory, "src-tauri/gen/android/gradlew"));
+
+      const result = await runNode("scripts/workspace/check-mobile-paths.mjs", [
+        "--root",
+        directory,
+      ]);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("ANDROID_HOST_INVALID_PARTIAL");
+      expect(result.stderr).toContain("src-tauri/gen/android/gradlew");
+    });
+  });
+
+  test.each([
+    [
+      "permission",
+      '<uses-permission android:name="android.permission.RECORD_AUDIO" />',
+      "ANDROID_CAPABILITY_PERMISSION",
+    ],
+    [
+      "leanback feature",
+      '<uses-feature android:name="android.software.leanback" android:required="false" />',
+      "ANDROID_CAPABILITY_FEATURE",
+    ],
+    [
+      "provider",
+      '<provider android:name="androidx.core.content.FileProvider" />',
+      "ANDROID_CAPABILITY_PROVIDER",
+    ],
+    ["service", '<service android:name=".UnexpectedService" />', "ANDROID_CAPABILITY_SERVICE"],
+    ["receiver", '<receiver android:name=".UnexpectedReceiver" />', "ANDROID_CAPABILITY_RECEIVER"],
+  ])("rejects an unowned Android %s", async (_name, addition, expectedCode) => {
+    await withTemporaryDirectory("stt-mobile-capability-", async (directory) => {
+      await createMobileFixture(directory);
+      const manifestPath = resolve(
+        directory,
+        "src-tauri/gen/android/app/src/main/AndroidManifest.xml",
+      );
+      const manifest = await readFile(manifestPath, "utf8");
+      const insertion = addition.startsWith("<uses-")
+        ? manifest.replace("<application", `${addition}\n    <application`)
+        : manifest.replace("</application>", `    ${addition}\n    </application>`);
+      await writeFile(manifestPath, insertion, "utf8");
+
+      const result = await runNode("scripts/workspace/check-mobile-paths.mjs", [
+        "--root",
+        directory,
+      ]);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain(expectedCode);
+      expect(result.stderr).not.toContain("android.permission.RECORD_AUDIO");
+    });
+  });
+
+  test("rejects native activity lifecycle expansion", async () => {
+    await withTemporaryDirectory("stt-mobile-activity-", async (directory) => {
+      await createMobileFixture(directory);
+      const activityPath = resolve(
+        directory,
+        "src-tauri/gen/android/app/src/main/java/com/yoophi/sttvoicememo/MainActivity.kt",
+      );
+      await writeFile(
+        activityPath,
+        "package com.yoophi.sttvoicememo\n\nclass MainActivity : TauriActivity() { fun record() = Unit }\n",
+        "utf8",
+      );
+
+      const result = await runNode("scripts/workspace/check-mobile-paths.mjs", [
+        "--root",
+        directory,
+      ]);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("ANDROID_HOST_ACTIVITY_INVALID");
+    });
+  });
+
+  test("reports an unavailable Android toolchain without echoing machine paths", async () => {
+    const result = await runNode("scripts/workspace/check-android-toolchain.mjs", [], {
+      env: { ...process.env, ANDROID_HOME: resolve(repositoryRoot, "missing-android-sdk") },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("ANDROID_TOOLCHAIN_UNAVAILABLE");
+    expect(result.stderr).toContain("component=platform-36");
+    expect(result.stderr).not.toContain(repositoryRoot);
+  });
+
+  test("accepts only the reviewed merged Android runtime manifest", async () => {
+    await withTemporaryDirectory("stt-merged-manifest-", async (directory) => {
+      const manifestPath = resolve(directory, "AndroidManifest.xml");
+      const dynamicPermission =
+        "com.yoophi.sttvoicememo.debug.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION";
+      await writeFile(
+        manifestPath,
+        `<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <permission android:name="${dynamicPermission}" android:protectionLevel="0x2" />
+  <uses-permission android:name="${dynamicPermission}" />
+  <application>
+    <activity android:name="com.yoophi.sttvoicememo.MainActivity" android:exported="true" />
+    <provider android:name="androidx.startup.InitializationProvider" android:exported="false" />
+    <receiver android:name="androidx.profileinstaller.ProfileInstallReceiver" android:permission="android.permission.DUMP" android:exported="true" />
+  </application>
+</manifest>
+`,
+        "utf8",
+      );
+
+      const accepted = await runNode("scripts/workspace/check-android-apk.mjs", [
+        "--manifest",
+        manifestPath,
+        "--variant",
+        "debug",
+      ]);
+      expect(accepted).toMatchObject({ exitCode: 0 });
+      expect(accepted.stdout).toContain("sensitivePermissions=0");
+
+      const mutated = (await readFile(manifestPath, "utf8")).replace(
+        "<application>",
+        '<uses-permission android:name="android.permission.RECORD_AUDIO" />\n  <application>',
+      );
+      await writeFile(manifestPath, mutated, "utf8");
+      const rejected = await runNode("scripts/workspace/check-android-apk.mjs", [
+        "--manifest",
+        manifestPath,
+        "--variant",
+        "debug",
+      ]);
+      expect(rejected.exitCode).toBe(1);
+      expect(rejected.stderr).toContain("ANDROID_APK_PERMISSION_INVALID");
+      expect(rejected.stderr).not.toContain("RECORD_AUDIO");
+    });
   });
 });
 
@@ -93,6 +253,12 @@ describe("user story 1: owned repository commands", () => {
 
     expect(Object.keys(packageJson.scripts)).toEqual(expect.arrayContaining(requiredScripts));
     expect(packageJson.scripts.tauri).toBe("tauri");
+    expect(packageJson.scripts["build:android"]).toBe(
+      "node scripts/workspace/run-android-build.mjs",
+    );
+    expect(packageJson.scripts["validate:android-host"]).toBe(
+      "node scripts/workspace/check-android-toolchain.mjs && node scripts/workspace/check-mobile-paths.mjs",
+    );
   });
 
   test("keeps backend development explicitly unavailable", async () => {
