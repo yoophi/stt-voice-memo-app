@@ -40,6 +40,10 @@ export const createTranscriptionContractDouble = ({
       retry_after_seconds: retryAfterSeconds,
     },
   });
+  const authenticationRequired = () => ({
+    status: 401,
+    body: problem(401, "AUTHENTICATION_REQUIRED", "user_actionable", false),
+  });
   const consumeRollingLimit = (counts, principal, limit) => {
     const currentTime = now();
     const cutoff = currentTime - rollingWindowMs;
@@ -61,12 +65,7 @@ export const createTranscriptionContractDouble = ({
 
   return {
     async submit(submission) {
-      if (!submission.bearerPrincipal) {
-        return {
-          status: 401,
-          body: problem(401, "AUTHENTICATION_REQUIRED", "user_actionable", false),
-        };
-      }
+      if (!submission.bearerPrincipal) return authenticationRequired();
 
       if (submission.dailyUsageAllowed === false) {
         return {
@@ -190,6 +189,8 @@ export const createTranscriptionContractDouble = ({
       return { status: 202, body: reservation.current };
     },
     async read({ bearerPrincipal, operationId }) {
+      if (!bearerPrincipal) return authenticationRequired();
+
       const retryAfter = consumeRollingLimit(
         managementCounts,
         bearerPrincipal,
@@ -205,9 +206,18 @@ export const createTranscriptionContractDouble = ({
         };
       }
 
-      return { status: 200, body: stored.reservation.current };
+      const { current } = stored.reservation;
+      return {
+        status: 200,
+        ...(current.state === "queued" || current.state === "processing"
+          ? { headers: { "Retry-After": "2" } }
+          : {}),
+        body: current,
+      };
     },
     async delete({ bearerPrincipal, operationId }) {
+      if (!bearerPrincipal) return authenticationRequired();
+
       const retryAfter = consumeRollingLimit(
         managementCounts,
         bearerPrincipal,

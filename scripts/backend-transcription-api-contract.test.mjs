@@ -137,20 +137,34 @@ describe("backend transcription API contract", () => {
     expect(provider.dispatchCount).toBe(1);
   });
 
-  test("missing authentication is rejected before provider dispatch", async () => {
+  test("all operations reject missing authentication before protected work", async () => {
     const { boundary, provider } = createContractHarness();
 
-    const response = await boundary.submit({
+    const submitted = await boundary.submit({
       bearerPrincipal: null,
       idempotencyKey: "idem-key-for-recording-0001",
       fingerprint: "sha256:recording-0001",
       sourceAudioId: "audio-1",
     });
-
-    expect(response).toMatchObject({
-      status: 401,
-      body: { code: "AUTHENTICATION_REQUIRED", category: "user_actionable", retryable: false },
+    const read = await boundary.read({
+      bearerPrincipal: null,
+      operationId: "unknown-operation",
     });
+    const deleted = await boundary.delete({
+      bearerPrincipal: null,
+      operationId: "unknown-operation",
+    });
+
+    for (const response of [submitted, read, deleted]) {
+      expect(response).toMatchObject({
+        status: 401,
+        body: {
+          code: "AUTHENTICATION_REQUIRED",
+          category: "user_actionable",
+          retryable: false,
+        },
+      });
+    }
     expect(provider.dispatchCount).toBe(0);
   });
 
@@ -239,7 +253,11 @@ describe("backend transcription API contract", () => {
       new Promise((resolve) => setTimeout(() => resolve("timed-out"), 20)),
     ]);
 
-    expect(status).toMatchObject({ status: 200, body: { state: "processing" } });
+    expect(status).toMatchObject({
+      status: 200,
+      headers: { "Retry-After": "2" },
+      body: { state: "processing" },
+    });
     finishProvider({ text: "Synthetic result" });
   });
 

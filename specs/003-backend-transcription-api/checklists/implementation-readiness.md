@@ -96,3 +96,7 @@ claims remain downstream conformance evidence.
       is visible through GET and same-key terminal replay without leaking raw errors.
 - [x] Create and combined GET/DELETE limits use clock-driven rolling windows,
       expire after 60 seconds, and include `Retry-After` guidance on rejection.
+- [x] POST, GET, and DELETE reject missing authentication with the same canonical
+      401 problem before rate-limit, ownership, provider, or cleanup work.
+- [x] Active GET returns immediately with `Retry-After: 2`; terminal GET omits
+      polling guidance.
