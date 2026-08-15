@@ -248,13 +248,30 @@ private struct ActiveRecording {
     let destination: URL
     let capture: AudioCapturing
     var state: RecordingState
+    var terminalIntent: TerminalIntent?
+}
+
+private enum TerminalIntent {
+    case stop(FinalizationReason)
+    case cancel
 }
 
 private enum TerminalResult {
     case finalized(NativeFinalizedRecording)
     case cancelled(CleanupOutcome)
     case failed(RecorderPluginError)
-    case cleanupPending(RecorderPluginError, URL)
+    case cleanupPending(RecorderPluginError, CleanupRecovery)
+}
+
+private enum CleanupRecovery {
+    case artifact(URL)
+    case audioSessionAndArtifact(URL)
+
+    var destination: URL {
+        switch self {
+        case .artifact(let destination), .audioSessionAndArtifact(let destination): destination
+        }
+    }
 }
 
 @MainActor
@@ -348,7 +365,8 @@ final class RecorderCoordinator {
                 startedAtMs: Self.nowMs(),
                 destination: destination,
                 capture: capture,
-                state: .recording
+                state: .recording,
+                terminalIntent: nil
             )
             active = recording
             let result = snapshot(recording)
@@ -375,30 +393,42 @@ final class RecorderCoordinator {
         afterRemoving destination: URL
     ) -> RecorderPluginError {
         let reportedError: RecorderPluginError
+        let audioSessionCleanupRequired: Bool
         do {
             try audioSession.deactivate()
             reportedError = error
+            audioSessionCleanupRequired = false
         } catch let cleanupError as RecorderPluginError {
             reportedError = cleanupError
+            audioSessionCleanupRequired = true
         } catch {
             reportedError = RecorderPluginError(code: .audioSessionFailure, retryable: true)
+            audioSessionCleanupRequired = true
         }
-        return startFailure(reportedError, sessionId: sessionId, afterRemoving: destination)
+        return startFailure(
+            reportedError,
+            sessionId: sessionId,
+            afterRemoving: destination,
+            audioSessionCleanupRequired: audioSessionCleanupRequired
+        )
     }
 
     private func startFailure(
         _ error: RecorderPluginError,
         sessionId: String,
-        afterRemoving destination: URL
+        afterRemoving destination: URL,
+        audioSessionCleanupRequired: Bool = false
     ) -> RecorderPluginError {
         let cleanup = files.remove(url: destination)
-        guard cleanup == .pending || cleanup == .failed else { return error }
-        let recoverableError = RecorderPluginError(
-            code: error.code,
-            retryable: true,
-            cleanup: cleanup
-        )
-        terminals[sessionId] = .cleanupPending(recoverableError, destination)
+        let artifactCleanupRequired = cleanup == .pending || cleanup == .failed
+        guard artifactCleanupRequired || audioSessionCleanupRequired else { return error }
+        let recoverableError = artifactCleanupRequired
+            ? RecorderPluginError(code: error.code, retryable: true, cleanup: cleanup)
+            : error
+        let recovery: CleanupRecovery = audioSessionCleanupRequired
+            ? .audioSessionAndArtifact(destination)
+            : .artifact(destination)
+        terminals[sessionId] = .cleanupPending(recoverableError, recovery)
         emit(sessionId: sessionId, state: .failed, cleanup: cleanup)
         return recoverableError
     }
@@ -444,26 +474,34 @@ final class RecorderCoordinator {
         else {
             throw RecorderPluginError(code: .invalidTransition)
         }
-        let durationMs = UInt64(max(0, recording.capture.currentTime) * 1_000)
-        if recording.state != .finalizing {
+        let winnerReason: FinalizationReason
+        switch recording.terminalIntent {
+        case .stop(let firstReason):
+            winnerReason = firstReason
+        case .cancel:
+            throw RecorderPluginError(code: .terminalConflict)
+        case nil:
+            winnerReason = reason
+            recording.terminalIntent = .stop(reason)
             recording.state = .finalizing
             active = recording
             recording.capture.stop()
         }
+        let durationMs = UInt64(max(0, recording.capture.currentTime) * 1_000)
         try deactivateAudioSession()
         do {
             let finalized = try files.finalize(
                 sessionId: sessionId,
                 url: recording.destination,
                 durationMs: durationMs,
-                reason: reason
+                reason: winnerReason
             )
             active = nil
             terminals[sessionId] = .finalized(finalized)
             emit(
                 sessionId: sessionId,
                 state: .finalized,
-                reason: reason,
+                reason: winnerReason,
                 recording: finalized.eventRecording
             )
             return finalized
@@ -472,14 +510,14 @@ final class RecorderCoordinator {
                 error,
                 sessionId: sessionId,
                 destination: recording.destination,
-                reason: reason
+                reason: winnerReason
             )
         } catch {
             throw finalizationFailure(
                 RecorderPluginError(code: .finalizationFailure),
                 sessionId: sessionId,
                 destination: recording.destination,
-                reason: reason
+                reason: winnerReason
             )
         }
     }
@@ -509,7 +547,7 @@ final class RecorderCoordinator {
         )
         active = nil
         if cleanupRetryable {
-            terminals[sessionId] = .cleanupPending(finalError, destination)
+            terminals[sessionId] = .cleanupPending(finalError, .artifact(destination))
         } else {
             terminals[sessionId] = .failed(finalError)
         }
@@ -521,14 +559,26 @@ final class RecorderCoordinator {
         if let terminal = terminals[sessionId] {
             switch terminal {
             case .cancelled(let cleanup): return cleanup
-            case .cleanupPending(_, let destination):
-                return try retryCleanup(sessionId: sessionId, destination: destination)
+            case .cleanupPending(_, let recovery):
+                if case .audioSessionAndArtifact = recovery {
+                    try deactivateAudioSession()
+                }
+                return try retryCleanup(
+                    sessionId: sessionId,
+                    destination: recovery.destination
+                )
             case .failed(let error): throw error
             case .finalized: throw RecorderPluginError(code: .terminalConflict)
             }
         }
         var recording = try requireActive(sessionId: sessionId)
-        if recording.state != .finalizing {
+        switch recording.terminalIntent {
+        case .stop:
+            throw RecorderPluginError(code: .terminalConflict)
+        case .cancel:
+            break
+        case nil:
+            recording.terminalIntent = .cancel
             recording.state = .finalizing
             active = recording
             recording.capture.stop()
@@ -542,7 +592,7 @@ final class RecorderCoordinator {
                 retryable: true,
                 cleanup: cleanup
             )
-            terminals[sessionId] = .cleanupPending(error, recording.destination)
+            terminals[sessionId] = .cleanupPending(error, .artifact(recording.destination))
             emit(sessionId: sessionId, state: .failed, cleanup: cleanup)
             throw error
         }
@@ -563,7 +613,7 @@ final class RecorderCoordinator {
             retryable: true,
             cleanup: cleanup
         )
-        terminals[sessionId] = .cleanupPending(error, destination)
+        terminals[sessionId] = .cleanupPending(error, .artifact(destination))
         emit(sessionId: sessionId, state: .failed, cleanup: cleanup)
         throw error
     }
@@ -645,7 +695,10 @@ final class RecorderCoordinator {
             state: recording.state,
             startedAtMs: recording.startedAtMs,
             durationMs: UInt64(max(0, recording.capture.currentTime) * 1_000),
-            terminalReason: nil
+            terminalReason: {
+                if case .stop(let reason) = recording.terminalIntent { return reason }
+                return nil
+            }()
         )
     }
 

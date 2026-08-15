@@ -238,6 +238,31 @@ mod tests {
     }
 
     #[test]
+    fn cancel_retries_audio_session_cleanup_reported_by_a_failed_start() {
+        let session_id = id("550e8400-e29b-41d4-a716-446655440000");
+        let audio_session_error = RecorderError::new(
+            RecorderErrorCode::AudioSessionFailure,
+            Some(session_id.clone()),
+            true,
+        );
+        let mut fake = FakeRecorder::default();
+        fake.start_results
+            .push_back(Err(audio_session_error.clone()));
+        fake.cleanup_results.push_back(Ok(CleanupOutcome::Removed));
+        let mut service = RecorderService::new(fake);
+
+        assert_eq!(
+            service.start(session_id.clone()).unwrap_err(),
+            audio_session_error
+        );
+        assert_eq!(
+            service.cancel(&session_id).unwrap(),
+            CleanupOutcome::Removed
+        );
+        assert_eq!(service.port().calls, vec!["start", "cancel"]);
+    }
+
+    #[test]
     fn start_reconciles_a_native_terminal_state_before_replacing_stale_rust_state() {
         let first = id("550e8400-e29b-41d4-a716-446655440000");
         let second = id("a3bb189e-8bf9-3888-9912-ace4e6543002");
@@ -337,6 +362,49 @@ mod tests {
         assert_eq!(cancel_error.code, RecorderErrorCode::TerminalConflict);
         assert_eq!(recording.session_id, session_id);
         assert_eq!(service.port().calls, vec!["start", "status", "stop"]);
+    }
+
+    #[test]
+    fn cancel_terminal_conflict_reconciles_a_native_winner_created_after_status() {
+        let session_id = id("550e8400-e29b-41d4-a716-446655440000");
+        let mut fake = FakeRecorder::default();
+        fake.status_results.extend([
+            RecordingSession::recording(session_id.clone()),
+            RecordingSession {
+                session_id: Some(session_id.clone()),
+                state: RecordingState::Finalized,
+                started_at_ms: None,
+                duration_ms: 750,
+                terminal_reason: Some(FinalizationReason::Interruption),
+            },
+        ]);
+        fake.cleanup_results.push_back(Err(RecorderError::new(
+            RecorderErrorCode::TerminalConflict,
+            Some(session_id.clone()),
+            false,
+        )));
+        let mut finalized = FinalizedRecording::fixture(session_id.clone());
+        finalized.finalization_reason = FinalizationReason::Interruption;
+        fake.stop_results.push_back(Ok(finalized));
+        let mut service = RecorderService::new(fake);
+        service.start(session_id.clone()).unwrap();
+
+        assert_eq!(
+            service.cancel(&session_id).unwrap_err().code,
+            RecorderErrorCode::TerminalConflict
+        );
+        let recovered = service
+            .stop(&session_id, FinalizationReason::UserStop)
+            .unwrap();
+
+        assert_eq!(
+            recovered.finalization_reason,
+            FinalizationReason::Interruption
+        );
+        assert_eq!(
+            service.port().calls,
+            vec!["start", "status", "cancel", "status", "stop"]
+        );
     }
 
     #[test]

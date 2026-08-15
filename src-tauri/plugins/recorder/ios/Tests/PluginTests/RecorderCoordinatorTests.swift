@@ -65,7 +65,7 @@ final class RecorderCoordinatorTests: XCTestCase {
         XCTAssertEqual(capture.stopCount, 1)
     }
 
-    func testStopRetriesAudioSessionCleanupBeforePublishingFinalized() async throws {
+    func testStopCleanupRetryPreservesTheFirstTerminalReasonAndRejectsCancel() async throws {
         let audioSession = FakeAudioSession(permission: .granted, deactivationFailures: 1)
         let capture = FakeCapture()
         let files = FakeRecordingFiles()
@@ -77,21 +77,28 @@ final class RecorderCoordinatorTests: XCTestCase {
         _ = try await coordinator.start(sessionId: Self.sessionId)
 
         XCTAssertThrowsError(
-            try coordinator.stop(sessionId: Self.sessionId, reason: .userStop)
+            try coordinator.stop(sessionId: Self.sessionId, reason: .interruption)
         ) { error in
             let recorderError = error as? RecorderPluginError
             XCTAssertEqual(recorderError?.code, .audioSessionFailure)
             XCTAssertEqual(recorderError?.retryable, true)
         }
-        XCTAssertEqual(try coordinator.status(sessionId: Self.sessionId).state, .finalizing)
+        let retrying = try coordinator.status(sessionId: Self.sessionId)
+        XCTAssertEqual(retrying.state, .finalizing)
+        XCTAssertEqual(retrying.terminalReason, .interruption)
         XCTAssertEqual(files.finalizeCount, 0)
+        XCTAssertThrowsError(try coordinator.cancel(sessionId: Self.sessionId)) { error in
+            XCTAssertEqual((error as? RecorderPluginError)?.code, .terminalConflict)
+        }
 
         let finalized = try coordinator.stop(sessionId: Self.sessionId, reason: .userStop)
 
         XCTAssertEqual(finalized.sessionId, Self.sessionId)
+        XCTAssertEqual(finalized.finalizationReason, .interruption)
         XCTAssertEqual(audioSession.deactivateCount, 2)
         XCTAssertEqual(capture.stopCount, 1)
         XCTAssertEqual(files.finalizeCount, 1)
+        XCTAssertEqual(files.removeCount, 0)
     }
 
     func testCancelActiveAndPausedSessionsRemovesEachArtifactOnce() async throws {
@@ -231,7 +238,7 @@ final class RecorderCoordinatorTests: XCTestCase {
         }
     }
 
-    func testStartFailureReportsAudioSessionCleanupFailure() async {
+    func testCancelRetriesAudioSessionCleanupAfterStartFailure() async throws {
         let audioSession = FakeAudioSession(permission: .granted, deactivationFailures: 1)
         let files = FakeRecordingFiles()
         let coordinator = RecorderCoordinator(
@@ -252,6 +259,16 @@ final class RecorderCoordinatorTests: XCTestCase {
         } catch {
             XCTFail("unexpected error type")
         }
+
+        let failed = try coordinator.status(sessionId: Self.sessionId)
+        let cleanup = try coordinator.cancel(sessionId: Self.sessionId)
+        let cancelled = try coordinator.status(sessionId: Self.sessionId)
+
+        XCTAssertEqual(failed.state, .failed)
+        XCTAssertEqual(cleanup, .removed)
+        XCTAssertEqual(cancelled.state, .cancelled)
+        XCTAssertEqual(audioSession.deactivateCount, 2)
+        XCTAssertEqual(files.removeCount, 2)
     }
 
     func testStartFailureReportsPendingAndFailedDestinationCleanup() async {

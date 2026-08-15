@@ -150,7 +150,9 @@ impl<P: RecorderPort> RecorderService<P> {
         if let Some(terminal) = self.lifecycle.terminal(session_id).cloned() {
             return match terminal {
                 TerminalOutcome::Cancelled(cleanup) => Ok(cleanup),
-                TerminalOutcome::Failed(error) if Self::cleanup_retryable(&error) => {
+                TerminalOutcome::Failed(error)
+                    if Self::cleanup_retryable(&error) || Self::audio_session_retryable(&error) =>
+                {
                     self.retry_cleanup(session_id)
                 }
                 TerminalOutcome::Failed(error) => Err(error),
@@ -216,6 +218,23 @@ impl<P: RecorderPort> RecorderService<P> {
                 Err(error)
             }
             Err(error) => {
+                if error.code == RecorderErrorCode::TerminalConflict {
+                    match self.refresh_session(Some(session_id)) {
+                        Ok(session)
+                            if matches!(
+                                session.state,
+                                RecordingState::Finalizing
+                                    | RecordingState::Finalized
+                                    | RecordingState::Cancelled
+                                    | RecordingState::Failed
+                            ) =>
+                        {
+                            return Err(error);
+                        }
+                        Err(_) => return Err(error),
+                        Ok(_) => {}
+                    }
+                }
                 if !Self::audio_session_retryable(&error) {
                     self.lifecycle.fail(session_id, error.clone());
                 }
