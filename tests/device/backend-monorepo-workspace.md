@@ -8,7 +8,7 @@ credentials, audio, transcript text, private paths, or signing material.
 
 ## Tested revision
 
-- Validated implementation commit: `5e4fb92`
+- Validated implementation commit: `5b57461`
 - Date: 2026-08-15
 - Validator: Codex automated validation on macOS; no physical iPhone or Android
   device was connected, so physical-device rows remain unverified
@@ -43,18 +43,18 @@ credentials, audio, transcript text, private paths, or signing material.
 
 ## Automated migration evidence
 
-| Command                                                                  | Commit    | Outcome | Notes                                                                                |
-| ------------------------------------------------------------------------ | --------- | ------- | ------------------------------------------------------------------------------------ |
-| `pnpm test:workspace`                                                    | `5e4fb92` | Passed  | 24 workspace/path/security tests                                                     |
-| `pnpm validate:contract`                                                 | `5e4fb92` | Passed  | 49 contract/workspace tests; generated contract current                              |
-| `pnpm validate:backend`                                                  | `5e4fb92` | Passed  | Scaffold and boundaries only; no runtime claim                                       |
-| `pnpm validate:mobile`                                                   | `5e4fb92` | Passed  | 18 frontend tests, boundary check, 64 Rust tests, both mobile paths, and secret scan |
-| `pnpm lint:rust`                                                         | `5e4fb92` | Passed  | Workspace/all-target Clippy; vendored `swift-rs` warnings only                       |
-| Clean checkout: `pnpm install --frozen-lockfile && pnpm test:swift`      | `5e4fb92` | Passed  | Generated ignored Tauri Swift API, then passed 17 simulator tests                    |
-| `pnpm tauri ios build --debug --target aarch64 --no-sign`                | `5e4fb92` | Passed  | Unsigned IPA remained under `src-tauri/gen/apple/build/arm64`                        |
-| `JAVA_HOME=$(/usr/libexec/java_home -v 17) pnpm tauri android build ...` | `5e4fb92` | Passed  | arm64 debug APK remained under `src-tauri/gen/android/app/build/outputs/apk`         |
-| `pnpm validate`                                                          | `5e4fb92` | Passed  | Full automated repository validation                                                 |
-| Content/secret/path review                                               | `5e4fb92` | Passed  | Plain and transformed synthetic canaries only; no real secret or mobile source move  |
+| Command                                                             | Commit    | Outcome | Notes                                                                                |
+| ------------------------------------------------------------------- | --------- | ------- | ------------------------------------------------------------------------------------ |
+| `pnpm test:workspace`                                               | `5b57461` | Passed  | 25 workspace/path/security tests                                                     |
+| `pnpm validate:contract`                                            | `5b57461` | Passed  | 50 contract/workspace tests; generated contract current                              |
+| `pnpm validate:backend`                                             | `5b57461` | Passed  | Scaffold and boundaries only; no runtime claim                                       |
+| `pnpm validate:mobile`                                              | `5b57461` | Passed  | 18 frontend, 64 Rust, 17 Swift, boundary, host-state, and actual-build canary checks |
+| `pnpm lint:rust`                                                    | `5b57461` | Passed  | Workspace/all-target Clippy; vendored `swift-rs` warnings only                       |
+| Clean checkout: `pnpm install --frozen-lockfile && pnpm test:swift` | `5e4fb92` | Passed  | Generated ignored Tauri Swift API, then passed 17 simulator tests                    |
+| `pnpm tauri ios build --debug --target aarch64 --no-sign`           | `5e4fb92` | Passed  | Unsigned IPA remained under `src-tauri/gen/apple/build/arm64`                        |
+| Android host scope comparison                                       | `5b57461` | Passed  | Generated host removed; tracked state again matches uninitialized `origin/main`      |
+| `pnpm validate`                                                     | `5b57461` | Passed  | Full automated repository validation                                                 |
+| Actual-build secret boundary                                        | `5b57461` | Passed  | Unique canary transformed by Vite, detected without echo, temporary build removed    |
 
 ## Completion
 
