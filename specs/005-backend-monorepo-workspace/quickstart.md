@@ -103,9 +103,10 @@ node scripts/workspace/check-mobile-paths.mjs
 The checker reports Apple as verified and Android as `unavailable` on the current
 baseline; that is an honest incomplete result, not a passing Android check.
 Issue [#24](https://github.com/yoophi/stt-voice-memo-app/issues/24) owns minimal
-Android host initialization and restoration of the root Android command. Do not
-commit locally generated SDK, native library, or signing files from this
-workspace migration.
+Android host initialization. The `pnpm tauri android ...` root CLI facade already
+exists, but no Android build command can complete until #24 supplies its host;
+#24 restores execution, not the facade itself. Do not commit locally generated
+SDK, native library, or signing files from this workspace migration.
 
 ## 8. Follow up physical-device evidence
 

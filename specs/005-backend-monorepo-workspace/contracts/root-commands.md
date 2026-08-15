@@ -23,7 +23,9 @@ Additional mandatory validation commands:
 - `pnpm check:contract-drift`: check without modifying tracked files.
 - `pnpm check:client-secrets`: inspect client sources and current `dist/` output.
 - `pnpm select:scopes -- <paths...>`: print deterministic JSON selection.
-- `pnpm tauri ios ...` and `pnpm tauri android ...`: unchanged mobile CLI facade.
+- `pnpm tauri ios ...` and `pnpm tauri android ...`: unchanged mobile CLI
+  facades. The Android facade exists, but its host/build remains unavailable
+  until Issue #24 initializes the minimal reviewed project.
 
 The root `test` command includes all currently runnable frontend, contract, Rust,
 and Swift tests on supported hosts. Platform-specific omissions must be printed

@@ -45,8 +45,11 @@ Use `pnpm validate:mobile`, `pnpm validate:backend`,
 deliberately unavailable until a later issue implements a runtime.
 
 Existing `pnpm tauri ios ...` and `pnpm tauri android ...` commands remain at the
-root. Mobile source and generated projects stay under `src-tauri`; this migration
-does not move signing or SDK-local files.
+root as CLI facades. The iOS host is available; the Android host/build path is
+not initialized and therefore cannot run yet. Issue #24 makes the existing
+Android facade executable by adding the minimal reviewed host. Mobile source and
+generated projects stay under `src-tauri`; this migration does not move signing
+or SDK-local files.
 
 ## Canonical contract workflow
 
